@@ -20,6 +20,7 @@ export default function Home() {
   const [selected, setSelected] = useState(0);
   const [open, setOpen] = useState<Slide | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [paused, setPaused] = useState(false);
   const [orbitDirection, setOrbitDirection] = useState<1 | -1>(1);
   const [camera, setCamera] = useState<"idle" | "loading" | "live" | "error">("idle");
@@ -45,6 +46,15 @@ export default function Home() {
   }, [paused, open, orbitDirection]);
 
   useEffect(() => () => cancelAnimationFrame(handRaf.current), []);
+
+  useEffect(() => {
+    if (!localStorage.getItem("gesture-guide-seen")) setGuideOpen(true);
+  }, []);
+
+  const closeGuide = () => {
+    localStorage.setItem("gesture-guide-seen", "true");
+    setGuideOpen(false);
+  };
 
   useEffect(() => {
     const nearest = mod(Math.round(-rotation / 60), slides.length);
@@ -134,7 +144,7 @@ export default function Home() {
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Vidya Singh home"><span>VS</span><b>VIDYA SINGH</b></a>
       <div className="status"><i className={camera === "live" ? "live" : ""}/>{camera === "live" ? gesture : "GESTURE PORTFOLIO"}</div>
-      <nav><button onClick={()=>setContactOpen(true)}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
+      <nav><button onClick={()=>setGuideOpen(true)}>GESTURE GUIDE</button><button onClick={()=>setContactOpen(true)}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
     </header>
 
     <section className="hero" id="top">
@@ -188,6 +198,20 @@ export default function Home() {
         <div><small>PHONE</small><strong>+91 62904 24147</strong></div>
         <div><small>LINKEDIN</small><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">vidya-singh-465350328 ↗</a></div>
       </div></div>
+    </section>}
+    {guideOpen && <section className="guidePanel" aria-modal="true" role="dialog" aria-label="Hand gesture guide">
+      <button className="close" onClick={closeGuide} aria-label="Close gesture guide">GOT IT <span>×</span></button>
+      <div className="guideInner">
+        <p>CAMERA CONTROL · QUICK GUIDE</p><h2>Your hand.<br/><em>The controller.</em></h2>
+        <div className="gestureGrid">
+          <article><span>✊</span><small>01 · PAUSE</small><strong>Close your fist</strong><p>Hold a closed fist in view to stop the orbit instantly.</p></article>
+          <article><span>🖐</span><small>02 · PLAY</small><strong>Open your hand</strong><p>Show an open palm to restart the automatic rotation.</p></article>
+          <article><span>↔</span><small>03 · DIRECTION</small><strong>Move left or right</strong><p>Move your visible fingers sideways to set the orbit direction.</p></article>
+          <article><span>☝</span><small>04 · OPEN</small><strong>Tap your index</strong><p>Fold the other fingers, then tap your index downward to open the centered slide.</p></article>
+        </div>
+        <div className="guideTip"><b>FOR BEST TRACKING</b><span>Face the camera · keep your full hand visible · use even lighting · allow camera permission</span></div>
+        <button className="guideStart" onClick={closeGuide}>ENTER THE ORBIT →</button>
+      </div>
     </section>}
     <footer><span>AVAILABLE FOR SOFTWARE ENGINEERING & AI OPPORTUNITIES</span><span>KOLKATA, INDIA · 2026</span></footer>
   </main>;

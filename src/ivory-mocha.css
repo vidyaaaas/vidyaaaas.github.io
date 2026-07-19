@@ -107,6 +107,11 @@ nav button,nav a{color:#cbbdab!important;font-weight:700!important}nav button:ho
 .gesturePrompt .handGlyph,.cameraError{color:var(--champagne-bright)}.gesturePrompt b{font-weight:800}.gesturePrompt small{color:#b9aa97;font-weight:600}
 .feedWrap{border-color:#d6b38245}.feedWrap b{color:var(--champagne-bright);background:#000d;font-weight:800}.gestureReadout small{color:#9d8d78}.gestureReadout strong{color:#fff8e7;font-weight:800}.gestureReadout div{color:#9f907d}.gestureReadout div span{color:var(--champagne)}.scanLine{background:var(--champagne-bright);box-shadow:0 0 8px #d6b382}
 
+.cameraRecovery{position:fixed;inset:0;z-index:190;display:grid;place-items:center;background:#000000e8;backdrop-filter:blur(14px)}
+.cameraRecoveryInner{position:relative;width:min(760px,88vw);padding:54px;border:1px solid #d6b3829a;background:radial-gradient(ellipse at 85% 10%,#b8753720,transparent 40%),linear-gradient(145deg,#171008,#020202 72%);box-shadow:0 35px 110px #000,inset 0 1px 0 #ffe8b52b;clip-path:polygon(0 0,calc(100% - 26px) 0,100% 26px,100% 100%,26px 100%,0 calc(100% - 26px))}
+.cameraRecoveryInner>p{margin:0;color:var(--champagne);font:800 8px var(--display-sans);letter-spacing:.25em}.cameraRecoveryInner h2{margin:22px 0 28px;color:var(--crystal-ivory);font:500 clamp(42px,6vw,78px)/.82 var(--display-serif);letter-spacing:-.055em}.cameraRecoveryInner h2 em{color:var(--champagne-bright);font-weight:500}.cameraRecoveryInner>strong{display:block;color:#fff8e7;font:800 10px var(--display-sans);letter-spacing:.18em}.cameraRecoveryInner ol{display:grid;gap:10px;margin:28px 0;padding-left:22px;color:#c8baa7;font:13px/1.5 var(--display-sans)}
+.cameraRecoveryActions{display:flex;gap:12px;flex-wrap:wrap}.cameraRecoveryActions button,.cameraRecoveryActions a{display:inline-flex;align-items:center;min-height:46px;padding:0 18px;border:1px solid var(--champagne);color:#130b05;background:linear-gradient(110deg,#a2662f,#ffe8b5);font:800 8px var(--display-sans);letter-spacing:.16em;text-decoration:none;cursor:pointer}.cameraRecoveryActions a{color:var(--champagne-bright);background:#050403}.cameraRecoveryInner>small{display:block;margin-top:22px;color:#8f806c;font:10px/1.55 var(--display-sans)}.cameraRecoveryClose{position:absolute;right:28px;top:23px;z-index:2;border:0;background:none;color:var(--champagne-bright);font:28px/1 var(--display-serif);cursor:pointer}
+
 .detail{background:radial-gradient(ellipse at 74% 42%,color-mix(in srgb,var(--accent) 22%,#d6b38222),transparent 36%),linear-gradient(127deg,#000 0%,#080604 55%,#010101 100%)!important;animation:detailFade .26s cubic-bezier(.2,.8,.2,1) both}
 .detail::before{background:radial-gradient(ellipse at center,transparent 25%,#000c 100%)}
 .detail::after{background:linear-gradient(90deg,transparent,#ffe8b524,transparent)}
@@ -130,6 +135,7 @@ footer{border-color:#d6b38220;color:#857766}
   .universe .orbCard{box-shadow:0 20px 48px #000e,0 0 0 1px #ffe8b512 inset!important}
   .sweepOne{mix-blend-mode:screen;opacity:.22}.sweepTwo{display:none}.cameraActive .lightSweep{display:none}.cinemaAtmosphere::before{width:90vw;right:-50vw;opacity:.72}
   .heroCopy .intro{font-size:10.5px;font-weight:600;color:#e7ddcf}
+  .cameraRecoveryInner{padding:38px 25px 30px}.cameraRecoveryInner h2{font-size:12vw}.cameraRecoveryActions{display:grid}.cameraRecoveryActions button,.cameraRecoveryActions a{justify-content:center}.cameraRecoveryClose{right:18px;top:16px}
 }
 
 @media(min-width:2200px){

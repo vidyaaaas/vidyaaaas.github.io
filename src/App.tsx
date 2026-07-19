@@ -86,6 +86,7 @@ export default function Home() {
   const openRef = useRef<Slide | null>(null);
   const gestureRef = useRef(gesture);
   const handSeenRef = useRef(false);
+  const cameraAutoStartRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
   const gestureWorkerRef = useRef<Worker | null>(null);
   const workerMessageHandlerRef = useRef<((event: MessageEvent<GestureWorkerMessage>) => void) | null>(null);
@@ -171,10 +172,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!localStorage.getItem("gesture-guide-seen")) setGuideOpen(true);
-  }, []);
-
-  useEffect(() => {
     const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
     if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
     const timer = window.setTimeout(() => { loadGestureWorker().catch(() => undefined); }, 350);
@@ -204,21 +201,31 @@ export default function Home() {
 
   const startCamera = async () => {
     if (camera === "live" || camera === "loading" || camera === "warming") return;
+    setGuideOpen(false);
+    localStorage.setItem("gesture-guide-seen", "true");
     setCameraError("");
     setCamera("loading");
+    updateGesture("REQUESTING CAMERA ACCESS");
     let acquiredStream: MediaStream | null = null;
     try {
       if (!window.isSecureContext) throw new DOMException("Camera requires HTTPS", "SecurityError");
       if (!navigator.mediaDevices?.getUserMedia) throw new DOMException("Camera API unavailable", "NotSupportedError");
-      const streamRequest = navigator.mediaDevices.getUserMedia({
-        video: {
+      const permissions = navigator.permissions as Permissions | undefined;
+      const permission = await permissions?.query({ name: "camera" as PermissionName }).catch(() => null);
+      if (permission?.state === "denied") throw new DOMException("Camera permission is blocked", "NotAllowedError");
+      if (permission?.state === "prompt") updateGesture("SELECT ALLOW IN THE CAMERA PROMPT");
+
+      const streamRequest = navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+        acquiredStream = stream;
+        const track = stream.getVideoTracks()[0];
+        track?.applyConstraints({
           width: { ideal: 320 },
           height: { ideal: 240 },
           frameRate: { ideal: 24, max: 30 },
           facingMode: "user",
-        },
-        audio: false,
-      }).then(stream => { acquiredStream = stream; return stream; });
+        }).catch(() => undefined);
+        return stream;
+      });
       const workerRequest = loadGestureWorker();
       const stream = await streamRequest;
       streamRef.current = stream;
@@ -349,18 +356,26 @@ export default function Home() {
       setCamera("error");
       const name = error instanceof DOMException ? error.name : "";
       const message = name === "NotAllowedError"
-        ? "CAMERA BLOCKED · ALLOW ACCESS, THEN RETRY"
+        ? "CAMERA IS BLOCKED IN THIS BROWSER"
         : name === "NotFoundError"
           ? "NO CAMERA FOUND"
           : name === "NotReadableError"
             ? "CAMERA BUSY · CLOSE OTHER CAMERA APPS"
             : name === "SecurityError" || name === "NotSupportedError"
               ? "CAMERA NEEDS A SECURE SUPPORTED BROWSER"
-              : "CAMERA START FAILED · TAP TO RETRY";
+              : "CAMERA COULD NOT START IN THIS BROWSER";
       setCameraError(message);
       updateGesture(message);
     }
   };
+
+  useEffect(() => {
+    if (cameraAutoStartRef.current || new URLSearchParams(window.location.search).get("camera") !== "1") return;
+    cameraAutoStartRef.current = true;
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash}`);
+    const timer = window.setTimeout(() => { startCamera(); }, 300);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const activateSlide = useCallback((index: number) => {
     const wasSelected = selectedRef.current === index;
@@ -422,13 +437,24 @@ export default function Home() {
         <p><b>FIST</b> STOP · <b>OPEN HAND</b> START<br/><b>MOVE LEFT / RIGHT</b> SET DIRECTION · <b>INDEX TAP</b> OPEN</p>
       </div>
       <div className="counter"><b>0{selected+1}</b><span>/ 0{slides.length}</span></div>
-      {cameraError && <div className="cameraError" role="status">{cameraError}</div>}
-      {(camera === "idle" || camera === "error") && <button className={`gesturePrompt ${camera === "error" ? "hasError" : ""}`} onClick={startCamera}><span className="handGlyph">☝</span><b>{camera === "error" ? "RESTORE CAMERA ACCESS" : <>CONTROL THIS ORBIT<br/>WITH YOUR HAND</>}</b><small>{camera === "error" ? "Allow this site to use your camera, then retry →" : "Activate camera tracking →"}</small></button>}
+      {camera === "idle" && <button className="gesturePrompt" onClick={startCamera}><span className="handGlyph">☝</span><b>CONTROL THIS ORBIT<br/>WITH YOUR HAND</b><small>Activate camera tracking →</small></button>}
       <aside className={`gestureDock ${camera === "live" || camera === "warming" ? "show" : ""}`}>
         <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA READY · LOADING AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
         <div className="gestureReadout"><small>LIVE GESTURE</small><strong>{gesture}</strong><div><span>FIST</span> stop · <span>OPEN</span> start<br/><span>MOVE</span> direction · <span>INDEX TAP</span> open</div></div>
       </aside>
     </section>
+
+    {camera === "error" && <section className="cameraRecovery" aria-modal="true" role="dialog" aria-label="Restore camera access">
+      <button className="cameraRecoveryClose" onClick={()=>{setCamera("idle");setCameraError("");}} aria-label="Close camera help">×</button>
+      <div className="cameraRecoveryInner">
+        <p>CAMERA ACCESS REQUIRED</p>
+        <h2>One final step.<br/><em>Let the site see your hand.</em></h2>
+        <strong>{cameraError}</strong>
+        <ol><li>Click the lock or camera icon beside the website address.</li><li>Change Camera to Allow.</li><li>Reload the page and select Enable Hand Control.</li></ol>
+        <div className="cameraRecoveryActions"><button onClick={startCamera}>TRY CAMERA AGAIN</button><a href="https://vidyaaaas.github.io/?camera=1" target="_blank" rel="external noreferrer">OPEN IN CHROME / SAFARI ↗</a></div>
+        <small>In-app browsers can block camera prompts. Opening the portfolio in Chrome or Safari restores the normal permission request.</small>
+      </div>
+    </section>}
 
     {open && <section className="detail" data-scene={open.id} style={{"--accent":open.accent} as React.CSSProperties} aria-modal="true" role="dialog">
       <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close" onClick={()=>setOpen(null)} aria-label="Close slide">CLOSE <span>×</span></button>

@@ -6,7 +6,7 @@ type Slide = { id: string; eyebrow: string; title: string; short: string; descri
 
 type HandPoint = { x: number; y: number };
 type HandTracker = {
-  detectForVideo: (video: HTMLVideoElement, timestamp: number) => { landmarks?: HandPoint[][] };
+  detectForVideo: (source: HTMLVideoElement | HTMLCanvasElement, timestamp: number) => { landmarks?: HandPoint[][] };
   close: () => void;
 };
 
@@ -88,6 +88,7 @@ export default function Home() {
   const handSeenRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
   const handTrackerRef = useRef<HandTracker | null>(null);
+  const inferenceCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const updatePaused = useCallback((next: boolean) => {
     if (pausedRef.current === next) return;
@@ -223,17 +224,28 @@ export default function Home() {
       videoRef.current.srcObject = stream; await videoRef.current.play();
       handTrackerRef.current = tracker;
       setCamera("live"); updateGesture("Show your hand");
-      let lastX = 0.5, smoothedX = 0.5, lastIndexY = 0.5, lastTap = 0, tapArmed = false;
+      let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
+      let lastIndexY = 0.5, indexVelocity = 0, lastTap = 0, tapArmed = false, tapReadyAt = 0;
+      let fistFrames = 0, openFrames = 0, lostAt = 0, directionFrames = 0;
+      let directionCandidate: 1 | -1 | null = null;
       let lastInference = 0;
       let lastVideoTime = -1;
       const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
-      const inferenceInterval = 1000 / (mobile ? 10 : 15);
+      const baseInferenceInterval = 1000 / (mobile ? 12 : 18);
+      let inferenceInterval = baseInferenceInterval;
+      const inferenceCanvas = inferenceCanvasRef.current ?? document.createElement("canvas");
+      inferenceCanvasRef.current = inferenceCanvas;
+      inferenceCanvas.width = mobile ? 224 : 256;
+      inferenceCanvas.height = mobile ? 168 : 192;
+      const inferenceContext = inferenceCanvas.getContext("2d", { alpha: false });
 
       const processHand = (hand: HandPoint[] | null, now: number) => {
-        if (hand) {
+        if (hand && hand.length >= 21) {
+          lostAt = 0;
           const x = 1 - hand[8].x;
-          smoothedX = smoothedX * .7 + x * .3;
-          const dx = smoothedX - lastX;
+          smoothedX = smoothedX * .72 + x * .28;
+          velocityX = velocityX * .62 + (smoothedX - lastX) * .38;
+          indexVelocity = indexVelocity * .55 + (hand[8].y - lastIndexY) * .45;
           const extended = (tip: number, pip: number) => hand[tip].y < hand[pip].y - .018;
           const folded = (tip: number, pip: number) => hand[tip].y > hand[pip].y - .004;
           const indexUp = extended(8, 6);
@@ -241,30 +253,52 @@ export default function Home() {
           const fist = folded(8, 6) && otherFolded;
           const openHand = indexUp && extended(12, 10) && extended(16, 14) && extended(20, 18);
           const indexOnly = indexUp && otherFolded;
-          const tappingDown = indexOnly && tapArmed && hand[8].y - lastIndexY > .028;
+          fistFrames = fist ? Math.min(3, fistFrames + 1) : 0;
+          openFrames = openHand ? Math.min(3, openFrames + 1) : 0;
+
+          if (indexOnly && !tapArmed) {
+            tapArmed = true;
+            tapReadyAt = now;
+            indexVelocity = 0;
+          } else if (!indexOnly && !fist) tapArmed = false;
+
+          const tappingDown = indexOnly && tapArmed && now - tapReadyAt > 70 && indexVelocity > .014;
           updateHandSeen(true);
 
-          if (tappingDown && now - lastTap > 700) {
+          if (tappingDown && now - lastTap > 650) {
             updatePaused(true);
             setOpen(slides[selectedRef.current]);
             lastTap = now; tapArmed = false; updateGesture("INDEX TAP · OPEN CENTER");
-          } else if (fist) {
-            updatePaused(true); tapArmed = false; updateGesture("FIST · ORBIT STOPPED");
+          } else if (fistFrames >= 2) {
+            updatePaused(true); tapArmed = false; directionFrames = 0; updateGesture("FIST · ORBIT STOPPED");
           } else {
-            if (Math.abs(dx) > .0055) {
-              const dir: 1 | -1 = dx > 0 ? 1 : -1;
-              directionRef.current = dir;
-              updateGesture(dir > 0 ? "MOVE RIGHT · ROTATE RIGHT" : "MOVE LEFT · ROTATE LEFT");
-            } else if (openHand) updateGesture("OPEN HAND · ORBIT RUNNING");
-            else if (indexOnly) updateGesture("INDEX READY · TAP DOWN");
-            if (openHand) updatePaused(false);
-            if (indexOnly && !tapArmed) tapArmed = true;
+            if (openFrames >= 2) updatePaused(false);
+
+            if (Math.abs(velocityX) > .0038) {
+              const candidate: 1 | -1 = velocityX > 0 ? 1 : -1;
+              if (directionCandidate === candidate) directionFrames += 1;
+              else { directionCandidate = candidate; directionFrames = 1; }
+              if (directionFrames >= 2) {
+                directionRef.current = candidate;
+                updateGesture(candidate > 0 ? "MOVE RIGHT · ROTATE RIGHT" : "MOVE LEFT · ROTATE LEFT");
+              }
+            } else {
+              directionFrames = 0;
+              directionCandidate = null;
+              if (openFrames >= 2) updateGesture("OPEN HAND · ORBIT RUNNING");
+            }
+
+            if (indexOnly && directionFrames === 0) updateGesture("INDEX READY · TAP DOWN");
           }
           lastX = smoothedX; lastIndexY = hand[8].y;
         } else {
-          updateHandSeen(false);
-          updatePaused(false);
-          updateGesture("NO HAND · AUTO ORBIT");
+          if (!lostAt) lostAt = now;
+          fistFrames = 0; openFrames = 0; directionFrames = 0; directionCandidate = null;
+          if (now - lostAt > 260) {
+            updateHandSeen(false);
+            updatePaused(false);
+            updateGesture("NO HAND · AUTO ORBIT");
+          }
         }
       };
 
@@ -277,10 +311,14 @@ export default function Home() {
         lastInference = now;
         lastVideoTime = video.currentTime;
         try {
-          const result = tracker.detectForVideo(video, now);
+          if (inferenceContext) inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
+          const started = performance.now();
+          const result = tracker.detectForVideo(inferenceContext ? inferenceCanvas : video, now);
+          const inferenceCost = performance.now() - started;
+          inferenceInterval = Math.max(baseInferenceInterval, Math.min(140, inferenceCost * 2.25));
           processHand(result.landmarks?.[0] ?? null, now);
         } catch {
-          updateHandSeen(false);
+          processHand(null, now);
         }
         handRaf.current = requestAnimationFrame(track);
       };

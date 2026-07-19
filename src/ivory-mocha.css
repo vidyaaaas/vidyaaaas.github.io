@@ -105,7 +105,7 @@ nav button,nav a{color:#d4c4b7!important}nav button:hover,nav a:hover{color:var(
 .gesturePrompt .handGlyph,.cameraError{color:var(--ivory-bright)}.gesturePrompt small{color:#d5c5b7}
 .feedWrap{border-color:#f2ede046}.feedWrap b{color:var(--ivory-bright)}.scanLine{background:var(--ivory);box-shadow:0 0 12px #fffaf0}
 
-.detail{background:radial-gradient(ellipse at 74% 42%,color-mix(in srgb,var(--accent) 22%,#f2ede04f),transparent 36%),linear-gradient(127deg,#34241e 0%,#453229 55%,#2c1e19 100%)!important}
+.detail{background:radial-gradient(ellipse at 74% 42%,color-mix(in srgb,var(--accent) 22%,#f2ede04f),transparent 36%),linear-gradient(127deg,#34241e 0%,#453229 55%,#2c1e19 100%)!important;animation:detailFade .3s cubic-bezier(.2,.8,.2,1) both}
 .detail::before{background:radial-gradient(ellipse at center,transparent 25%,#2a1a1685 100%)}
 .detail::after{background:linear-gradient(90deg,transparent,#fffaf06b,transparent)}
 .detailGlow{background:radial-gradient(circle,#fffaf02e,transparent 64%)}
@@ -120,6 +120,8 @@ nav button,nav a{color:#d4c4b7!important}nav button:hover,nav a:hover{color:var(
 .gestureGrid{border-color:#f2ede03f}.gestureGrid article{border-color:#f2ede021;background:linear-gradient(145deg,#f2ede00d,transparent)}.gestureGrid article>span{color:var(--ivory-bright);filter:none}.gestureGrid small{color:var(--ivory-bright)}.gestureGrid p{color:#d0c0b2}
 .guideStart{color:var(--mocha);border-radius:999px;background:linear-gradient(110deg,#d3b8a5,#fffaf0,#d8bdab);box-shadow:inset 0 1px 0 #fff}
 footer{border-color:#f2ede027;color:#beac9f}
+
+@keyframes detailFade{from{opacity:0}to{opacity:1}}
 
 @media(max-width:800px){
   .heroCopy::before{background:linear-gradient(180deg,#34241efa 0%,#3e2b24ee 68%,transparent 100%)!important}

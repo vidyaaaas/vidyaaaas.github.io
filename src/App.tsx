@@ -5,40 +5,40 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Slide = { id: string; eyebrow: string; title: string; short: string; description: string; tags: string[]; link?: string; accent: string; stat: string; statLabel: string };
 
 type HandPoint = { x: number; y: number };
-type GestureWorkerMessage = { type: "ready" } | { type: "result"; hand: HandPoint[] | null; timestamp: number } | { type: "error"; stage: "init" | "frame"; timestamp?: number };
-let gestureWorkerPromise: Promise<Worker> | null = null;
+type HandTracker = {
+  detectForVideo: (source: HTMLVideoElement | HTMLCanvasElement, timestamp: number) => { landmarks?: HandPoint[][] };
+  close: () => void;
+};
 
-function loadGestureWorker() {
-  if (gestureWorkerPromise) return gestureWorkerPromise;
-  gestureWorkerPromise = new Promise<Worker>((resolve, reject) => {
-    const worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), { type: "module" });
-    const cleanup = () => {
-      worker.removeEventListener("message", handleMessage);
-      worker.removeEventListener("error", handleError);
+const handModelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+let handTrackerPromise: Promise<HandTracker> | null = null;
+
+function loadHandTracker() {
+  if (handTrackerPromise) return handTrackerPromise;
+  handTrackerPromise = (async () => {
+    const vision = await import("@mediapipe/tasks-vision");
+    const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
+    const options = {
+      baseOptions: { modelAssetPath: handModelUrl, delegate: "GPU" as const },
+      runningMode: "VIDEO" as const,
+      numHands: 1,
+      minHandDetectionConfidence: .48,
+      minHandPresenceConfidence: .48,
+      minTrackingConfidence: .48,
     };
-    const handleMessage = (event: MessageEvent<GestureWorkerMessage>) => {
-      if (event.data.type === "ready") {
-        cleanup();
-        resolve(worker);
-      } else if (event.data.type === "error" && event.data.stage === "init") {
-        cleanup();
-        worker.terminate();
-        reject(new Error("Gesture engine initialization failed"));
-      }
-    };
-    const handleError = () => {
-      cleanup();
-      worker.terminate();
-      reject(new Error("Gesture engine failed"));
-    };
-    worker.addEventListener("message", handleMessage);
-    worker.addEventListener("error", handleError);
-    worker.postMessage({ type: "init" });
-  }).catch(error => {
-    gestureWorkerPromise = null;
+    try {
+      return await vision.HandLandmarker.createFromOptions(files, options) as HandTracker;
+    } catch {
+      return await vision.HandLandmarker.createFromOptions(files, {
+        ...options,
+        baseOptions: { modelAssetPath: handModelUrl, delegate: "CPU" as const },
+      }) as HandTracker;
+    }
+  })().catch(error => {
+    handTrackerPromise = null;
     throw error;
   });
-  return gestureWorkerPromise;
+  return handTrackerPromise;
 }
 
 const slides: Slide[] = [
@@ -88,10 +88,8 @@ export default function Home() {
   const handSeenRef = useRef(false);
   const cameraAutoStartRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
-  const gestureWorkerRef = useRef<Worker | null>(null);
-  const workerMessageHandlerRef = useRef<((event: MessageEvent<GestureWorkerMessage>) => void) | null>(null);
-  const framePendingRef = useRef(false);
-  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handTrackerRef = useRef<HandTracker | null>(null);
+  const inferenceCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const updatePaused = useCallback((next: boolean) => {
     if (pausedRef.current === next) return;
@@ -165,9 +163,7 @@ export default function Home() {
 
   useEffect(() => () => {
     cancelAnimationFrame(handRaf.current);
-    if (gestureWorkerRef.current && workerMessageHandlerRef.current) {
-      gestureWorkerRef.current.removeEventListener("message", workerMessageHandlerRef.current);
-    }
+    handTrackerRef.current?.close();
     streamRef.current?.getTracks().forEach(track => track.stop());
   }, []);
 
@@ -203,11 +199,6 @@ export default function Home() {
     try {
       if (!window.isSecureContext) throw new DOMException("Camera requires HTTPS", "SecurityError");
       if (!navigator.mediaDevices?.getUserMedia) throw new DOMException("Camera API unavailable", "NotSupportedError");
-      const permissions = navigator.permissions as Permissions | undefined;
-      const permission = await permissions?.query({ name: "camera" as PermissionName }).catch(() => null);
-      if (permission?.state === "denied") throw new DOMException("Camera permission is blocked", "NotAllowedError");
-      if (permission?.state === "prompt") updateGesture("SELECT ALLOW IN THE CAMERA PROMPT");
-
       const streamRequest = navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
         acquiredStream = stream;
         const track = stream.getVideoTracks()[0];
@@ -227,8 +218,16 @@ export default function Home() {
       updateGesture("CAMERA LIVE · STARTING HAND AI");
       void videoRef.current.play().catch(() => undefined);
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      const worker = await loadGestureWorker();
-      gestureWorkerRef.current = worker;
+      let tracker: HandTracker;
+      try {
+        tracker = await loadHandTracker();
+      } catch {
+        setCamera("live");
+        setCameraError("CAMERA LIVE · HAND AI COULD NOT LOAD");
+        updateGesture("CAMERA LIVE · HAND AI COULD NOT LOAD");
+        return;
+      }
+      handTrackerRef.current = tracker;
       setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
       let lastIndexY = 0.5, indexVelocity = 0, lastTap = 0, tapArmed = false, tapReadyAt = 0;
@@ -237,7 +236,13 @@ export default function Home() {
       let lastInference = 0;
       let lastVideoTime = -1;
       const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
-      const inferenceInterval = 1000 / (mobile ? 11 : 16);
+      const baseInferenceInterval = 1000 / (mobile ? 10 : 15);
+      let inferenceInterval = baseInferenceInterval;
+      const inferenceCanvas = inferenceCanvasRef.current ?? document.createElement("canvas");
+      inferenceCanvasRef.current = inferenceCanvas;
+      inferenceCanvas.width = mobile ? 208 : 240;
+      inferenceCanvas.height = mobile ? 156 : 180;
+      const inferenceContext = inferenceCanvas.getContext("2d", { alpha: false });
 
       const processHand = (hand: HandPoint[] | null, now: number) => {
         if (hand && hand.length >= 21) {
@@ -302,43 +307,23 @@ export default function Home() {
         }
       };
 
-      if (workerMessageHandlerRef.current) worker.removeEventListener("message", workerMessageHandlerRef.current);
-      const handleWorkerMessage = (event: MessageEvent<GestureWorkerMessage>) => {
-        if (event.data.type === "result") {
-          framePendingRef.current = false;
-          processHand(event.data.hand, event.data.timestamp);
-        } else if (event.data.type === "error" && event.data.stage === "frame") {
-          framePendingRef.current = false;
-          processHand(null, event.data.timestamp ?? performance.now());
-        }
-      };
-      workerMessageHandlerRef.current = handleWorkerMessage;
-      worker.addEventListener("message", handleWorkerMessage);
-
       const track = (now: number) => {
         const video = videoRef.current;
-        if (!video || video.readyState < 2 || document.hidden || framePendingRef.current || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
+        if (!video || video.readyState < 2 || document.hidden || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
           handRaf.current = requestAnimationFrame(track);
           return;
         }
         lastInference = now;
         lastVideoTime = video.currentTime;
-        framePendingRef.current = true;
-        if (typeof createImageBitmap === "function") {
-          createImageBitmap(video).then(frame => {
-            worker.postMessage({ type: "frame", frame, timestamp: now }, [frame]);
-          }).catch(() => { framePendingRef.current = false; });
-        } else {
-          const canvas = captureCanvasRef.current ?? document.createElement("canvas");
-          captureCanvasRef.current = canvas;
-          canvas.width = mobile ? 224 : 256;
-          canvas.height = mobile ? 168 : 192;
-          const context = canvas.getContext("2d", { alpha: false });
-          if (context) {
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-            worker.postMessage({ type: "frame", frame, timestamp: now }, [frame.data.buffer]);
-          } else framePendingRef.current = false;
+        try {
+          if (inferenceContext) inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
+          const started = performance.now();
+          const result = tracker.detectForVideo(inferenceContext ? inferenceCanvas : video, now);
+          const inferenceCost = performance.now() - started;
+          inferenceInterval = Math.max(baseInferenceInterval, Math.min(180, inferenceCost * 2.6));
+          processHand(result.landmarks?.[0] ?? null, now);
+        } catch {
+          processHand(null, now);
         }
         handRaf.current = requestAnimationFrame(track);
       };
@@ -346,7 +331,6 @@ export default function Home() {
     } catch (error) {
       (streamRef.current ?? acquiredStream)?.getTracks().forEach(track => track.stop());
       streamRef.current = null;
-      framePendingRef.current = false;
       setCamera("error");
       const name = error instanceof DOMException ? error.name : "";
       const message = name === "NotAllowedError"
@@ -426,29 +410,19 @@ export default function Home() {
         </div>
       </div>
       <div className="controls">
-        <button onClick={startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "OPENING CAMERA…" : camera === "warming" ? "CALIBRATING HAND AI…" : camera === "live" ? "GESTURES LIVE" : camera === "error" ? "RETRY CAMERA" : "ENABLE HAND CONTROL"}</button>
+        <button onClick={camera === "live" && cameraError ? ()=>window.location.assign("/?camera=1") : startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "OPENING CAMERA…" : camera === "warming" ? "CALIBRATING HAND AI…" : camera === "live" ? cameraError ? "RETRY HAND AI" : "GESTURES LIVE" : camera === "error" ? "RETRY CAMERA" : "ENABLE HAND CONTROL"}</button>
         <button className="pause" onClick={()=>updatePaused(!pausedRef.current)} aria-label={paused?"Resume orbit":"Pause orbit"}>{paused?"▶":"Ⅱ"}</button>
         <p><b>FIST</b> STOP · <b>OPEN HAND</b> START<br/><b>MOVE LEFT / RIGHT</b> SET DIRECTION · <b>INDEX TAP</b> OPEN</p>
       </div>
       <div className="counter"><b>0{selected+1}</b><span>/ 0{slides.length}</span></div>
       {camera === "idle" && <button className="gesturePrompt" onClick={startCamera}><span className="handGlyph">☝</span><b>CONTROL THIS ORBIT<br/>WITH YOUR HAND</b><small>Activate camera tracking →</small></button>}
+      {camera === "error" && <button className="gesturePrompt hasError" onClick={startCamera}><span className="handGlyph">↻</span><b>CAMERA COULD NOT START</b><small>{cameraError} · Tap to retry</small></button>}
+      {camera === "live" && cameraError && <div className="cameraError" role="status">{cameraError}</div>}
       <aside className={`gestureDock ${camera === "live" || camera === "warming" ? "show" : ""}`}>
         <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline autoPlay onClick={()=>{void videoRef.current?.play();}}/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA LIVE · LOADING HAND AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
         <div className="gestureReadout"><small>LIVE GESTURE</small><strong>{gesture}</strong><div><span>FIST</span> stop · <span>OPEN</span> start<br/><span>MOVE</span> direction · <span>INDEX TAP</span> open</div></div>
       </aside>
     </section>
-
-    {camera === "error" && <section className="cameraRecovery" aria-modal="true" role="dialog" aria-label="Restore camera access">
-      <button className="cameraRecoveryClose" onClick={()=>{setCamera("idle");setCameraError("");}} aria-label="Close camera help">×</button>
-      <div className="cameraRecoveryInner">
-        <p>CAMERA ACCESS REQUIRED</p>
-        <h2>One final step.<br/><em>Let the site see your hand.</em></h2>
-        <strong>{cameraError}</strong>
-        <ol><li>Click the lock or camera icon beside the website address.</li><li>Change Camera to Allow.</li><li>Reload the page and select Enable Hand Control.</li></ol>
-        <div className="cameraRecoveryActions"><button onClick={startCamera}>TRY CAMERA AGAIN</button><a href="https://vidyaaaas.github.io/?camera=1" target="_blank" rel="external noreferrer">OPEN IN CHROME / SAFARI ↗</a></div>
-        <small>In-app browsers can block camera prompts. Opening the portfolio in Chrome or Safari restores the normal permission request.</small>
-      </div>
-    </section>}
 
     {open && <section className="detail" data-scene={open.id} style={{"--accent":open.accent} as React.CSSProperties} aria-modal="true" role="dialog">
       <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close" onClick={()=>setOpen(null)} aria-label="Close slide">CLOSE <span>×</span></button>

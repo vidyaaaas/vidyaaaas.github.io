@@ -171,13 +171,6 @@ export default function Home() {
     streamRef.current?.getTracks().forEach(track => track.stop());
   }, []);
 
-  useEffect(() => {
-    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
-    if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
-    const timer = window.setTimeout(() => { loadGestureWorker().catch(() => undefined); }, 350);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const closeGuide = () => {
     localStorage.setItem("gesture-guide-seen", "true");
     setGuideOpen(false);
@@ -226,14 +219,15 @@ export default function Home() {
         }).catch(() => undefined);
         return stream;
       });
-      const workerRequest = loadGestureWorker();
       const stream = await streamRequest;
       streamRef.current = stream;
       if (!videoRef.current) throw new Error("Camera preview unavailable");
-      videoRef.current.srcObject = stream; await videoRef.current.play();
+      videoRef.current.srcObject = stream;
       setCamera("warming");
-      updateGesture("CAMERA READY · CALIBRATING HAND AI");
-      const worker = await workerRequest;
+      updateGesture("CAMERA LIVE · STARTING HAND AI");
+      void videoRef.current.play().catch(() => undefined);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const worker = await loadGestureWorker();
       gestureWorkerRef.current = worker;
       setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
@@ -439,7 +433,7 @@ export default function Home() {
       <div className="counter"><b>0{selected+1}</b><span>/ 0{slides.length}</span></div>
       {camera === "idle" && <button className="gesturePrompt" onClick={startCamera}><span className="handGlyph">☝</span><b>CONTROL THIS ORBIT<br/>WITH YOUR HAND</b><small>Activate camera tracking →</small></button>}
       <aside className={`gestureDock ${camera === "live" || camera === "warming" ? "show" : ""}`}>
-        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA READY · LOADING AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
+        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline autoPlay onClick={()=>{void videoRef.current?.play();}}/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA LIVE · LOADING HAND AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
         <div className="gestureReadout"><small>LIVE GESTURE</small><strong>{gesture}</strong><div><span>FIST</span> stop · <span>OPEN</span> start<br/><span>MOVE</span> direction · <span>INDEX TAP</span> open</div></div>
       </aside>
     </section>

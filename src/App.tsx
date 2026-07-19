@@ -150,7 +150,7 @@ export default function Home() {
     <section className="hero" id="top">
       <div className="heroCopy">
         <p className="kicker">AI ENGINEER · CREATIVE DEVELOPER</p>
-        <h1>Ideas in<br/><em>orbit.</em></h1>
+        <h1 className="portfolioTitle">Building<br/><em>intelligent</em><br/>experiences.</h1>
         <p className="intro">I build intelligent experiences where computer vision meets thoughtful software.</p>
       </div>
       <div className="orbitWrap" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>

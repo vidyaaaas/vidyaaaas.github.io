@@ -16,36 +16,100 @@ const slides: Slide[] = [
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
 export default function Home() {
-  const [rotation, setRotation] = useState(0);
   const [selected, setSelected] = useState(0);
   const [open, setOpen] = useState<Slide | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [orbitDirection, setOrbitDirection] = useState<1 | -1>(1);
   const [camera, setCamera] = useState<"idle" | "loading" | "live" | "error">("idle");
   const [gesture, setGesture] = useState("Move to explore");
-  const [handPos, setHandPos] = useState({ x: 50, y: 50, seen: false, pinching: false });
+  const [handSeen, setHandSeen] = useState(false);
   const drag = useRef({ active: false, x: 0, moved: 0 });
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const orbitRaf = useRef(0);
   const handRaf = useRef(0);
-  const rotRef = useRef(rotation);
-  rotRef.current = rotation;
+  const rotRef = useRef(0);
+  const pausedRef = useRef(false);
+  const directionRef = useRef<1 | -1>(1);
+  const selectedRef = useRef(0);
+  const openRef = useRef<Slide | null>(null);
+  const gestureRef = useRef(gesture);
+  const handSeenRef = useRef(false);
+  const streamRef = useRef<MediaStream | null>(null);
+  const landmarkerRef = useRef<{ close: () => void } | null>(null);
+
+  const updatePaused = useCallback((next: boolean) => {
+    if (pausedRef.current === next) return;
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  const updateGesture = useCallback((next: string) => {
+    if (gestureRef.current === next) return;
+    gestureRef.current = next;
+    setGesture(next);
+  }, []);
+
+  const updateHandSeen = useCallback((next: boolean) => {
+    if (handSeenRef.current === next) return;
+    handSeenRef.current = next;
+    setHandSeen(next);
+  }, []);
+
+  const paintOrbit = useCallback((rotation: number) => {
+    const nearest = mod(Math.round(-rotation / 60), slides.length);
+    if (nearest !== selectedRef.current) {
+      selectedRef.current = nearest;
+      setSelected(nearest);
+    }
+
+    cardRefs.current.forEach((card, i) => {
+      if (!card) return;
+      const angle = (rotation + i * 60) * Math.PI / 180;
+      const sine = Math.sin(angle);
+      const depth = Math.cos(angle);
+      card.style.setProperty("--x", `${sine * 43}vw`);
+      card.style.setProperty("--y", `${Math.abs(sine) * 11 + (1 - depth) * 9}vh`);
+      card.style.setProperty("--s", `${.58 + (depth + 1) * .27}`);
+      card.style.setProperty("--o", `${.18 + (depth + 1) * .41}`);
+      card.style.setProperty("--z", `${Math.round((depth + 1) * 50)}`);
+      const active = nearest === i;
+      card.classList.toggle("active", active);
+      card.setAttribute("aria-selected", String(active));
+    });
+  }, []);
+
+  const setOrbitRotation = useCallback((rotation: number) => {
+    rotRef.current = rotation;
+    paintOrbit(rotation);
+  }, [paintOrbit]);
 
   useEffect(() => {
-    if (paused || open) return;
     let last = performance.now();
     const tick = (now: number) => {
-      const dt = Math.min(32, now - last); last = now;
-      setRotation(v => v + dt * 0.03 * orbitDirection);
+      const dt = Math.min(50, now - last);
+      last = now;
+      if (!pausedRef.current && !openRef.current) {
+        rotRef.current += dt * .03 * directionRef.current;
+        paintOrbit(rotRef.current);
+      }
       orbitRaf.current = requestAnimationFrame(tick);
     };
+    paintOrbit(rotRef.current);
     orbitRaf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(orbitRaf.current);
-  }, [paused, open, orbitDirection]);
+  }, [paintOrbit]);
 
-  useEffect(() => () => cancelAnimationFrame(handRaf.current), []);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
+  useEffect(() => () => {
+    cancelAnimationFrame(handRaf.current);
+    landmarkerRef.current?.close();
+    streamRef.current?.getTracks().forEach(track => track.stop());
+  }, []);
 
   useEffect(() => {
     if (!localStorage.getItem("gesture-guide-seen")) setGuideOpen(true);
@@ -56,16 +120,11 @@ export default function Home() {
     setGuideOpen(false);
   };
 
-  useEffect(() => {
-    const nearest = mod(Math.round(-rotation / 60), slides.length);
-    setSelected(nearest);
-  }, [rotation]);
-
   const navigate = useCallback((dir: number) => {
-    setPaused(true);
-    setRotation(v => v - dir * 60);
-    setGesture(dir > 0 ? "Orbit right" : "Orbit left");
-  }, []);
+    updatePaused(true);
+    setOrbitRotation(rotRef.current - dir * 60);
+    updateGesture(dir > 0 ? "Orbit right" : "Orbit left");
+  }, [setOrbitRotation, updateGesture, updatePaused]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -78,21 +137,57 @@ export default function Home() {
   }, [navigate, open, selected]);
 
   const startCamera = async () => {
-    if (camera === "live") return;
+    if (camera === "live" || camera === "loading") return;
     setCamera("loading");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: "user" }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+          frameRate: { ideal: 24, max: 30 },
+          facingMode: "user",
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
       if (!videoRef.current) return;
       videoRef.current.srcObject = stream; await videoRef.current.play();
       const vision = await import("@mediapipe/tasks-vision");
       const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
-      const landmarker = await vision.HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" }, runningMode: "VIDEO", numHands: 1 });
-      setCamera("live"); setGesture("Show your hand");
+      const modelAssetPath = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+      const options = {
+        baseOptions: { modelAssetPath, delegate: "GPU" as const },
+        runningMode: "VIDEO" as const,
+        numHands: 1,
+        minHandDetectionConfidence: .55,
+        minHandPresenceConfidence: .55,
+        minTrackingConfidence: .55,
+      };
+      let landmarker;
+      try {
+        landmarker = await vision.HandLandmarker.createFromOptions(files, options);
+      } catch {
+        landmarker = await vision.HandLandmarker.createFromOptions(files, {
+          ...options,
+          baseOptions: { modelAssetPath, delegate: "CPU" as const },
+        });
+      }
+      landmarkerRef.current = landmarker;
+      setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, lastIndexY = 0.5, lastTap = 0, tapArmed = false;
-      const track = () => {
+      let lastInference = 0;
+      let lastVideoTime = -1;
+      const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
+      const inferenceInterval = 1000 / (mobile ? 15 : 24);
+      const track = (now: number) => {
         const video = videoRef.current;
-        if (!video || video.readyState < 2) { handRaf.current = requestAnimationFrame(track); return; }
-        const result = landmarker.detectForVideo(video, performance.now());
+        if (!video || video.readyState < 2 || document.hidden || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
+          handRaf.current = requestAnimationFrame(track);
+          return;
+        }
+        lastInference = now;
+        lastVideoTime = video.currentTime;
+        const result = landmarker.detectForVideo(video, now);
         const hand = result.landmarks?.[0];
         if (hand) {
           const x = 1 - hand[8].x;
@@ -106,38 +201,45 @@ export default function Home() {
           const openHand = indexUp && extended(12, 10) && extended(16, 14) && extended(20, 18);
           const indexOnly = indexUp && otherFolded;
           const tappingDown = indexOnly && tapArmed && hand[8].y - lastIndexY > .028;
-          setHandPos({ x: x * 100, y: hand[8].y * 100, seen: true, pinching: tappingDown });
+          updateHandSeen(true);
 
-          if (tappingDown && performance.now() - lastTap > 700) {
-            setPaused(true);
-            setOpen(slides[mod(Math.round(-rotRef.current / 60), slides.length)]);
-            lastTap = performance.now(); tapArmed = false; setGesture("INDEX TAP · OPEN CENTER");
+          if (tappingDown && now - lastTap > 700) {
+            updatePaused(true);
+            setOpen(slides[selectedRef.current]);
+            lastTap = now; tapArmed = false; updateGesture("INDEX TAP · OPEN CENTER");
           } else if (fist) {
-            setPaused(true); tapArmed = false; setGesture("FIST · ORBIT STOPPED");
+            updatePaused(true); tapArmed = false; updateGesture("FIST · ORBIT STOPPED");
           } else {
             if (Math.abs(dx) > .0055) {
               const dir: 1 | -1 = dx > 0 ? 1 : -1;
-              setOrbitDirection(dir); setGesture(dir > 0 ? "MOVE RIGHT · ROTATE RIGHT" : "MOVE LEFT · ROTATE LEFT");
-            } else if (openHand) setGesture("OPEN HAND · ORBIT RUNNING");
-            else if (indexOnly) setGesture("INDEX READY · TAP DOWN");
-            if (openHand) setPaused(false);
+              directionRef.current = dir;
+              updateGesture(dir > 0 ? "MOVE RIGHT · ROTATE RIGHT" : "MOVE LEFT · ROTATE LEFT");
+            } else if (openHand) updateGesture("OPEN HAND · ORBIT RUNNING");
+            else if (indexOnly) updateGesture("INDEX READY · TAP DOWN");
+            if (openHand) updatePaused(false);
             if (indexOnly && !tapArmed) tapArmed = true;
           }
           lastX = smoothedX; lastIndexY = hand[8].y;
         } else {
-          setHandPos(p => p.seen ? { ...p, seen: false } : p);
-          setPaused(false);
-          setGesture("NO HAND · AUTO ORBIT");
+          updateHandSeen(false);
+          updatePaused(false);
+          updateGesture("NO HAND · AUTO ORBIT");
         }
         handRaf.current = requestAnimationFrame(track);
       };
       handRaf.current = requestAnimationFrame(track);
-    } catch { setCamera("error"); setGesture("Camera unavailable · use pointer"); }
+    } catch {
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+      setCamera("error");
+      updateGesture("Camera unavailable · use pointer");
+    }
   };
 
-  const pointerDown = (e: React.PointerEvent) => { drag.current = { active: true, x: e.clientX, moved: 0 }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); setPaused(true); };
-  const pointerMove = (e: React.PointerEvent) => { if (!drag.current.active) return; const dx=e.clientX-drag.current.x; drag.current.x=e.clientX; drag.current.moved+=Math.abs(dx); setRotation(v=>v+dx*.16); setGesture("Drag · orbit"); };
-  const pointerUp = () => { if (drag.current.moved < 8) setOpen(slides[selected]); drag.current.active=false; };
+  const pointerDown = (e: React.PointerEvent) => { drag.current = { active: true, x: e.clientX, moved: 0 }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); updatePaused(true); };
+  const pointerMove = (e: React.PointerEvent) => { if (!drag.current.active) return; const dx=e.clientX-drag.current.x; drag.current.x=e.clientX; drag.current.moved+=Math.abs(dx); setOrbitRotation(rotRef.current + dx*.16); updateGesture("Drag · orbit"); };
+  const pointerUp = () => { if (drag.current.moved < 8) setOpen(slides[selectedRef.current]); drag.current.active=false; };
+  const pointerCancel = () => { drag.current.active = false; };
 
   return <main className="universe">
     <div className="stars" aria-hidden="true" />
@@ -153,17 +255,17 @@ export default function Home() {
         <h1 className="portfolioTitle">Building<br/><em>intelligent</em><br/>experiences.</h1>
         <p className="intro">I build intelligent experiences where computer vision meets thoughtful software.</p>
       </div>
-      <div className="orbitWrap" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>
+      <div className="orbitWrap" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel}>
         <div className="horizon" />
         <div className="orbit" role="listbox" aria-label="Portfolio slides">
           {slides.map((s,i) => {
-            const angle = (rotation + i * 60) * Math.PI / 180;
+            const angle = i * 60 * Math.PI / 180;
             const x = Math.sin(angle) * 43;
             const z = Math.cos(angle);
             const y = Math.abs(Math.sin(angle)) * 11 + (1-z)*9;
             const scale = .58 + (z+1)*.27;
             const opacity = .18 + (z+1)*.41;
-            return <button key={s.id} className={`orbCard ${selected===i?"active":""}`} style={{"--x":`${x}vw`,"--y":`${y}vh`,"--s":scale,"--o":opacity,"--accent":s.accent,"--z":Math.round((z+1)*50)} as React.CSSProperties} onClick={(e)=>{e.stopPropagation();setPaused(true);setRotation(-i*60);if(selected===i)setOpen(s)}} role="option" aria-selected={selected===i}>
+            return <button key={s.id} ref={element => { cardRefs.current[i] = element; }} className={`orbCard ${selected===i?"active":""}`} style={{"--x":`${x}vw`,"--y":`${y}vh`,"--s":scale,"--o":opacity,"--accent":s.accent,"--z":Math.round((z+1)*50)} as React.CSSProperties} onClick={(e)=>{e.stopPropagation();const wasSelected=selectedRef.current===i;updatePaused(true);setOrbitRotation(-i*60);if(wasSelected)setOpen(s)}} role="option" aria-selected={selected===i}>
               <span className="cardNum">0{i+1}</span><span className="cardEyebrow">{s.eyebrow.split(" / ")[1]}</span><strong>{s.title}</strong><span className="cardLine"/><small>{s.short}</small><span className="cardAction">TAP TO ENTER ↗</span>
             </button>
           })}
@@ -171,13 +273,13 @@ export default function Home() {
       </div>
       <div className="controls">
         <button onClick={startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "STARTING…" : camera === "live" ? "GESTURES LIVE" : "ENABLE HAND CONTROL"}</button>
-        <button className="pause" onClick={()=>setPaused(v=>!v)} aria-label={paused?"Resume orbit":"Pause orbit"}>{paused?"▶":"Ⅱ"}</button>
+        <button className="pause" onClick={()=>updatePaused(!pausedRef.current)} aria-label={paused?"Resume orbit":"Pause orbit"}>{paused?"▶":"Ⅱ"}</button>
         <p><b>FIST</b> STOP · <b>OPEN HAND</b> START<br/><b>MOVE LEFT / RIGHT</b> SET DIRECTION · <b>INDEX TAP</b> OPEN</p>
       </div>
       <div className="counter"><b>0{selected+1}</b><span>/ 0{slides.length}</span></div>
       {camera === "idle" && <button className="gesturePrompt" onClick={startCamera}><span className="handGlyph">☝</span><b>CONTROL THIS ORBIT<br/>WITH YOUR HAND</b><small>Activate camera tracking →</small></button>}
       <aside className={`gestureDock ${camera === "live" ? "show" : ""}`}>
-        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline/><span className="scanLine"/><b>{handPos.seen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
+        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline/><span className="scanLine"/><b>{handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
         <div className="gestureReadout"><small>LIVE GESTURE</small><strong>{gesture}</strong><div><span>FIST</span> stop · <span>OPEN</span> start<br/><span>MOVE</span> direction · <span>INDEX TAP</span> open</div></div>
       </aside>
     </section>

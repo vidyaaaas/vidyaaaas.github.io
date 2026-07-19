@@ -382,7 +382,7 @@ export default function Home() {
       <div className="heroCopy">
         <p className="kicker"><span>SELECTED WORKS</span> AI ENGINEER · CREATIVE DEVELOPER</p>
         <h1 className="portfolioTitle">Building<br/><em>intelligent</em><br/>experiences.</h1>
-        <p className="intro">A cinematic collection of intelligent systems where computer vision, research and thoughtful software move as one.</p>
+        <p className="intro">I turn computer vision, research and bold ideas into intelligent software that sees, understands and solves real-world problems.</p>
         <div className="cinemaCredits"><span><b>DISCIPLINE</b>AI / VISION / SOFTWARE</span><span><b>EDITION</b>PORTFOLIO · 2026</span></div>
       </div>
       <div className="orbitWrap" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel}>

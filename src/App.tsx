@@ -5,49 +5,49 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Slide = { id: string; eyebrow: string; title: string; short: string; description: string; tags: string[]; link?: string; accent: string; stat: string; statLabel: string };
 
 type HandPoint = { x: number; y: number };
-type HandTracker = {
-  detectForVideo: (source: HTMLVideoElement | HTMLCanvasElement, timestamp: number) => { landmarks?: HandPoint[][] };
-  close: () => void;
-};
+type GestureWorkerMessage = { type: "ready" } | { type: "result"; hand: HandPoint[] | null; timestamp: number } | { type: "error"; stage: "init" | "frame"; timestamp?: number };
+let gestureWorkerPromise: Promise<Worker> | null = null;
 
-const handModelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
-let handTrackerPromise: Promise<HandTracker> | null = null;
-
-function loadHandTracker() {
-  if (handTrackerPromise) return handTrackerPromise;
-  handTrackerPromise = (async () => {
-    const vision = await import("@mediapipe/tasks-vision");
-    const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
-    const options = {
-      baseOptions: { modelAssetPath: handModelUrl, delegate: "GPU" as const },
-      runningMode: "VIDEO" as const,
-      numHands: 1,
-      minHandDetectionConfidence: .5,
-      minHandPresenceConfidence: .5,
-      minTrackingConfidence: .5,
+function loadGestureWorker() {
+  if (gestureWorkerPromise) return gestureWorkerPromise;
+  gestureWorkerPromise = new Promise<Worker>((resolve, reject) => {
+    const worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), { type: "module" });
+    const cleanup = () => {
+      worker.removeEventListener("message", handleMessage);
+      worker.removeEventListener("error", handleError);
     };
-    try {
-      return await vision.HandLandmarker.createFromOptions(files, options) as HandTracker;
-    } catch {
-      return await vision.HandLandmarker.createFromOptions(files, {
-        ...options,
-        baseOptions: { modelAssetPath: handModelUrl, delegate: "CPU" as const },
-      }) as HandTracker;
-    }
-  })().catch(error => {
-    handTrackerPromise = null;
+    const handleMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+      if (event.data.type === "ready") {
+        cleanup();
+        resolve(worker);
+      } else if (event.data.type === "error" && event.data.stage === "init") {
+        cleanup();
+        worker.terminate();
+        reject(new Error("Gesture engine initialization failed"));
+      }
+    };
+    const handleError = () => {
+      cleanup();
+      worker.terminate();
+      reject(new Error("Gesture engine failed"));
+    };
+    worker.addEventListener("message", handleMessage);
+    worker.addEventListener("error", handleError);
+    worker.postMessage({ type: "init" });
+  }).catch(error => {
+    gestureWorkerPromise = null;
     throw error;
   });
-  return handTrackerPromise;
+  return gestureWorkerPromise;
 }
 
 const slides: Slide[] = [
-  { id: "intro", eyebrow: "01 / PROFILE", title: "Vidya Singh", short: "AI engineer building systems that can see, reason and respond.", description: "Computer Science & Artificial Intelligence student in Kolkata, focused on reliable computer vision, full-stack workflows and production-ready software.", tags: ["Computer Vision", "AI / ML", "Software Engineering"], accent: "#d8c2b2", stat: "2026", statLabel: "B.Tech · MSIT" },
-  { id: "spare", eyebrow: "02 / FEATURED BUILD", title: "Spare Part Recognition", short: "A vision system for identifying real-world industrial components.", description: "Modular Python and OpenCV recognition with preprocessing, feature matching, metadata lookup, structured predictions and evaluation reports—designed for reliable end-to-end use.", tags: ["Python", "OpenCV", "FastAPI-ready"], link: "https://github.com/vidyaaaas/spare-part-recognition", accent: "#b88f7c", stat: "E2E", statLabel: "Recognition workflow" },
-  { id: "landmark", eyebrow: "03 / COMPUTER VISION", title: "Landmark Detection", short: "Transfer learning that turns pixels into places.", description: "Landmark classification using ResNet and InceptionV3, improved through data augmentation, hyperparameter tuning and model optimization.", tags: ["TensorFlow", "CNN", "Transfer Learning"], link: "https://github.com/vidyaaaas/Landmark-Detection-2", accent: "#9e7e77", stat: "85–90%", statLabel: "Model accuracy" },
-  { id: "research", eyebrow: "04 / PRODUCT THINKING", title: "App Research Case Study", short: "Research translated into clear, useful product decisions.", description: "A structured product research case study that connects user insight, problem framing and interface thinking into an actionable design narrative.", tags: ["Research", "UX Strategy", "Case Study"], link: "https://github.com/vidyaaaas/app-research-case-study", accent: "#c4a18d", stat: "360°", statLabel: "Product perspective" },
-  { id: "deepfake", eyebrow: "05 / DEEP LEARNING", title: "Multi-Modal Deepfake Detection", short: "Detecting synthetic media across visual, pulse and audio signals.", description: "A modular pipeline combining rPPG, facial features and audio spectrograms, with evaluation and performance tracking across modalities.", tags: ["PyTorch", "rPPG", "Audio + Video"], accent: "#896568", stat: "93.57%", statLabel: "Detection accuracy" },
-  { id: "experience", eyebrow: "06 / EXPERIENCE", title: "AI Engineer Intern", short: "From experimental models to dependable application workflows.", description: "At Hari Chand Anand & Co., I build computer vision pipelines for spare-part recognition. Previously at Coincent.ai, I worked on Python, ML fundamentals and landmark detection.", tags: ["OpenCV", "Evaluation", "Backend Logic"], accent: "#a28b80", stat: "2×", statLabel: "Engineering internships" },
+  { id: "intro", eyebrow: "01 / PROFILE", title: "Vidya Singh", short: "AI engineer building systems that can see, reason and respond.", description: "Computer Science & Artificial Intelligence student in Kolkata, focused on reliable computer vision, full-stack workflows and production-ready software.", tags: ["Computer Vision", "AI / ML", "Software Engineering"], accent: "#ffe8b5", stat: "2026", statLabel: "B.Tech · MSIT" },
+  { id: "spare", eyebrow: "02 / FEATURED BUILD", title: "Spare Part Recognition", short: "A vision system for identifying real-world industrial components.", description: "Modular Python and OpenCV recognition with preprocessing, feature matching, metadata lookup, structured predictions and evaluation reports—designed for reliable end-to-end use.", tags: ["Python", "OpenCV", "FastAPI-ready"], link: "https://github.com/vidyaaaas/spare-part-recognition", accent: "#d9944a", stat: "E2E", statLabel: "Recognition workflow" },
+  { id: "landmark", eyebrow: "03 / COMPUTER VISION", title: "Landmark Detection", short: "Transfer learning that turns pixels into places.", description: "Landmark classification using ResNet and InceptionV3, improved through data augmentation, hyperparameter tuning and model optimization.", tags: ["TensorFlow", "CNN", "Transfer Learning"], link: "https://github.com/vidyaaaas/Landmark-Detection-2", accent: "#f1c878", stat: "85–90%", statLabel: "Model accuracy" },
+  { id: "research", eyebrow: "04 / PRODUCT THINKING", title: "App Research Case Study", short: "Research translated into clear, useful product decisions.", description: "A structured product research case study that connects user insight, problem framing and interface thinking into an actionable design narrative.", tags: ["Research", "UX Strategy", "Case Study"], link: "https://github.com/vidyaaaas/app-research-case-study", accent: "#b87537", stat: "360°", statLabel: "Product perspective" },
+  { id: "deepfake", eyebrow: "05 / DEEP LEARNING", title: "Multi-Modal Deepfake Detection", short: "Detecting synthetic media across visual, pulse and audio signals.", description: "A modular pipeline combining rPPG, facial features and audio spectrograms, with evaluation and performance tracking across modalities.", tags: ["PyTorch", "rPPG", "Audio + Video"], accent: "#e1aa65", stat: "93.57%", statLabel: "Detection accuracy" },
+  { id: "experience", eyebrow: "06 / EXPERIENCE", title: "AI Engineer Intern", short: "From experimental models to dependable application workflows.", description: "At Hari Chand Anand & Co., I build computer vision pipelines for spare-part recognition. Previously at Coincent.ai, I worked on Python, ML fundamentals and landmark detection.", tags: ["OpenCV", "Evaluation", "Backend Logic"], accent: "#fff0c2", stat: "2×", statLabel: "Engineering internships" },
 ];
 
 const mod = (n: number, m: number) => ((n % m) + m) % m;
@@ -87,8 +87,10 @@ export default function Home() {
   const gestureRef = useRef(gesture);
   const handSeenRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
-  const handTrackerRef = useRef<HandTracker | null>(null);
-  const inferenceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const gestureWorkerRef = useRef<Worker | null>(null);
+  const workerMessageHandlerRef = useRef<((event: MessageEvent<GestureWorkerMessage>) => void) | null>(null);
+  const framePendingRef = useRef(false);
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const updatePaused = useCallback((next: boolean) => {
     if (pausedRef.current === next) return;
@@ -162,7 +164,9 @@ export default function Home() {
 
   useEffect(() => () => {
     cancelAnimationFrame(handRaf.current);
-    handTrackerRef.current?.close();
+    if (gestureWorkerRef.current && workerMessageHandlerRef.current) {
+      gestureWorkerRef.current.removeEventListener("message", workerMessageHandlerRef.current);
+    }
     streamRef.current?.getTracks().forEach(track => track.stop());
   }, []);
 
@@ -173,16 +177,8 @@ export default function Home() {
   useEffect(() => {
     const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
     if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
-    const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
-    let idleId = 0;
-    const timer = window.setTimeout(() => {
-      if (idleWindow.requestIdleCallback) idleId = idleWindow.requestIdleCallback(() => { loadHandTracker().catch(() => undefined); }, { timeout: 2600 });
-      else loadHandTracker().catch(() => undefined);
-    }, 1200);
-    return () => {
-      window.clearTimeout(timer);
-      if (idleId) idleWindow.cancelIdleCallback?.(idleId);
-    };
+    const timer = window.setTimeout(() => { loadGestureWorker().catch(() => undefined); }, 350);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const closeGuide = () => {
@@ -223,15 +219,15 @@ export default function Home() {
         },
         audio: false,
       }).then(stream => { acquiredStream = stream; return stream; });
-      const trackerRequest = loadHandTracker();
+      const workerRequest = loadGestureWorker();
       const stream = await streamRequest;
       streamRef.current = stream;
       if (!videoRef.current) throw new Error("Camera preview unavailable");
       videoRef.current.srcObject = stream; await videoRef.current.play();
       setCamera("warming");
       updateGesture("CAMERA READY · CALIBRATING HAND AI");
-      const tracker = await trackerRequest;
-      handTrackerRef.current = tracker;
+      const worker = await workerRequest;
+      gestureWorkerRef.current = worker;
       setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
       let lastIndexY = 0.5, indexVelocity = 0, lastTap = 0, tapArmed = false, tapReadyAt = 0;
@@ -240,13 +236,7 @@ export default function Home() {
       let lastInference = 0;
       let lastVideoTime = -1;
       const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
-      const baseInferenceInterval = 1000 / (mobile ? 12 : 18);
-      let inferenceInterval = baseInferenceInterval;
-      const inferenceCanvas = inferenceCanvasRef.current ?? document.createElement("canvas");
-      inferenceCanvasRef.current = inferenceCanvas;
-      inferenceCanvas.width = mobile ? 224 : 256;
-      inferenceCanvas.height = mobile ? 168 : 192;
-      const inferenceContext = inferenceCanvas.getContext("2d", { alpha: false });
+      const inferenceInterval = 1000 / (mobile ? 11 : 16);
 
       const processHand = (hand: HandPoint[] | null, now: number) => {
         if (hand && hand.length >= 21) {
@@ -311,23 +301,43 @@ export default function Home() {
         }
       };
 
+      if (workerMessageHandlerRef.current) worker.removeEventListener("message", workerMessageHandlerRef.current);
+      const handleWorkerMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+        if (event.data.type === "result") {
+          framePendingRef.current = false;
+          processHand(event.data.hand, event.data.timestamp);
+        } else if (event.data.type === "error" && event.data.stage === "frame") {
+          framePendingRef.current = false;
+          processHand(null, event.data.timestamp ?? performance.now());
+        }
+      };
+      workerMessageHandlerRef.current = handleWorkerMessage;
+      worker.addEventListener("message", handleWorkerMessage);
+
       const track = (now: number) => {
         const video = videoRef.current;
-        if (!video || video.readyState < 2 || document.hidden || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
+        if (!video || video.readyState < 2 || document.hidden || framePendingRef.current || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
           handRaf.current = requestAnimationFrame(track);
           return;
         }
         lastInference = now;
         lastVideoTime = video.currentTime;
-        try {
-          if (inferenceContext) inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
-          const started = performance.now();
-          const result = tracker.detectForVideo(inferenceContext ? inferenceCanvas : video, now);
-          const inferenceCost = performance.now() - started;
-          inferenceInterval = Math.max(baseInferenceInterval, Math.min(140, inferenceCost * 2.25));
-          processHand(result.landmarks?.[0] ?? null, now);
-        } catch {
-          processHand(null, now);
+        framePendingRef.current = true;
+        if (typeof createImageBitmap === "function") {
+          createImageBitmap(video).then(frame => {
+            worker.postMessage({ type: "frame", frame, timestamp: now }, [frame]);
+          }).catch(() => { framePendingRef.current = false; });
+        } else {
+          const canvas = captureCanvasRef.current ?? document.createElement("canvas");
+          captureCanvasRef.current = canvas;
+          canvas.width = mobile ? 224 : 256;
+          canvas.height = mobile ? 168 : 192;
+          const context = canvas.getContext("2d", { alpha: false });
+          if (context) {
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+            worker.postMessage({ type: "frame", frame, timestamp: now }, [frame.data.buffer]);
+          } else framePendingRef.current = false;
         }
         handRaf.current = requestAnimationFrame(track);
       };
@@ -335,6 +345,7 @@ export default function Home() {
     } catch (error) {
       (streamRef.current ?? acquiredStream)?.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+      framePendingRef.current = false;
       setCamera("error");
       const name = error instanceof DOMException ? error.name : "";
       const message = name === "NotAllowedError"
@@ -369,7 +380,7 @@ export default function Home() {
   const pointerUp = () => { if (drag.current.moved < 8 && drag.current.index !== null) activateSlide(drag.current.index); drag.current.active=false; drag.current.index=null; };
   const pointerCancel = () => { drag.current.active = false; drag.current.index = null; };
 
-  return <main className="universe">
+  return <main className={`universe${camera === "live" || camera === "warming" ? " cameraActive" : ""}`}>
     <div className="cinemaAtmosphere" aria-hidden="true"><span className="lightSweep sweepOne"/><span className="lightSweep sweepTwo"/><span className="filmGrain"/><span className="vignette"/></div>
     <div className="stars" aria-hidden="true" />
     <header className="topbar">

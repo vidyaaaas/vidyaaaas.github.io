@@ -70,7 +70,7 @@ export default function Home() {
   const [contactOpen, setContactOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [camera, setCamera] = useState<"idle" | "loading" | "live" | "error">("idle");
+  const [camera, setCamera] = useState<"idle" | "loading" | "warming" | "live" | "error">("idle");
   const [cameraError, setCameraError] = useState("");
   const [gesture, setGesture] = useState("Move to explore");
   const [handSeen, setHandSeen] = useState(false);
@@ -173,10 +173,16 @@ export default function Home() {
   useEffect(() => {
     const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
     if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
+    const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    let idleId = 0;
     const timer = window.setTimeout(() => {
-      fetch(handModelUrl, { mode: "cors", cache: "force-cache" }).catch(() => undefined);
-    }, 900);
-    return () => window.clearTimeout(timer);
+      if (idleWindow.requestIdleCallback) idleId = idleWindow.requestIdleCallback(() => { loadHandTracker().catch(() => undefined); }, { timeout: 2600 });
+      else loadHandTracker().catch(() => undefined);
+    }, 1200);
+    return () => {
+      window.clearTimeout(timer);
+      if (idleId) idleWindow.cancelIdleCallback?.(idleId);
+    };
   }, []);
 
   const closeGuide = () => {
@@ -201,7 +207,7 @@ export default function Home() {
   }, [navigate, open, selected]);
 
   const startCamera = async () => {
-    if (camera === "live" || camera === "loading") return;
+    if (camera === "live" || camera === "loading" || camera === "warming") return;
     setCameraError("");
     setCamera("loading");
     let acquiredStream: MediaStream | null = null;
@@ -218,10 +224,13 @@ export default function Home() {
         audio: false,
       }).then(stream => { acquiredStream = stream; return stream; });
       const trackerRequest = loadHandTracker();
-      const [stream, tracker] = await Promise.all([streamRequest, trackerRequest]);
+      const stream = await streamRequest;
       streamRef.current = stream;
       if (!videoRef.current) throw new Error("Camera preview unavailable");
       videoRef.current.srcObject = stream; await videoRef.current.play();
+      setCamera("warming");
+      updateGesture("CAMERA READY · CALIBRATING HAND AI");
+      const tracker = await trackerRequest;
       handTrackerRef.current = tracker;
       setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
@@ -365,7 +374,7 @@ export default function Home() {
     <div className="stars" aria-hidden="true" />
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Vidya Singh home"><span>VS</span><b>VIDYA SINGH</b></a>
-      <div className="status"><i className={camera === "live" ? "live" : ""}/>{camera === "live" ? gesture : "GESTURE PORTFOLIO"}</div>
+      <div className="status"><i className={camera === "live" || camera === "warming" ? "live" : ""}/>{camera === "live" || camera === "warming" ? gesture : "GESTURE PORTFOLIO"}</div>
       <nav><button onClick={()=>setGuideOpen(true)}>GESTURE GUIDE</button><button onClick={()=>setContactOpen(true)}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
     </header>
 
@@ -397,15 +406,15 @@ export default function Home() {
         </div>
       </div>
       <div className="controls">
-        <button onClick={startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "INITIALIZING CAMERA…" : camera === "live" ? "GESTURES LIVE" : camera === "error" ? "RETRY CAMERA" : "ENABLE HAND CONTROL"}</button>
+        <button onClick={startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "OPENING CAMERA…" : camera === "warming" ? "CALIBRATING HAND AI…" : camera === "live" ? "GESTURES LIVE" : camera === "error" ? "RETRY CAMERA" : "ENABLE HAND CONTROL"}</button>
         <button className="pause" onClick={()=>updatePaused(!pausedRef.current)} aria-label={paused?"Resume orbit":"Pause orbit"}>{paused?"▶":"Ⅱ"}</button>
         <p><b>FIST</b> STOP · <b>OPEN HAND</b> START<br/><b>MOVE LEFT / RIGHT</b> SET DIRECTION · <b>INDEX TAP</b> OPEN</p>
       </div>
       <div className="counter"><b>0{selected+1}</b><span>/ 0{slides.length}</span></div>
       {cameraError && <div className="cameraError" role="status">{cameraError}</div>}
       {(camera === "idle" || camera === "error") && <button className={`gesturePrompt ${camera === "error" ? "hasError" : ""}`} onClick={startCamera}><span className="handGlyph">☝</span><b>{camera === "error" ? "RESTORE CAMERA ACCESS" : <>CONTROL THIS ORBIT<br/>WITH YOUR HAND</>}</b><small>{camera === "error" ? "Allow this site to use your camera, then retry →" : "Activate camera tracking →"}</small></button>}
-      <aside className={`gestureDock ${camera === "live" ? "show" : ""}`}>
-        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline/><span className="scanLine"/><b>{handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
+      <aside className={`gestureDock ${camera === "live" || camera === "warming" ? "show" : ""}`}>
+        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA READY · LOADING AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
         <div className="gestureReadout"><small>LIVE GESTURE</small><strong>{gesture}</strong><div><span>FIST</span> stop · <span>OPEN</span> start<br/><span>MOVE</span> direction · <span>INDEX TAP</span> open</div></div>
       </aside>
     </section>

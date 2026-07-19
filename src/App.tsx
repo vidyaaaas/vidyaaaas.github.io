@@ -4,6 +4,43 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type Slide = { id: string; eyebrow: string; title: string; short: string; description: string; tags: string[]; link?: string; accent: string; stat: string; statLabel: string };
 
+type HandPoint = { x: number; y: number };
+type GestureWorkerMessage = { type: "ready" } | { type: "result"; hand: HandPoint[] | null; timestamp: number } | { type: "error"; stage: "init" | "frame"; timestamp?: number };
+let gestureWorkerPromise: Promise<Worker> | null = null;
+
+function loadGestureWorker() {
+  if (gestureWorkerPromise) return gestureWorkerPromise;
+  gestureWorkerPromise = new Promise<Worker>((resolve, reject) => {
+    const worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), { type: "module" });
+    const cleanup = () => {
+      worker.removeEventListener("message", handleMessage);
+      worker.removeEventListener("error", handleError);
+    };
+    const handleMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+      if (event.data.type === "ready") {
+        cleanup();
+        resolve(worker);
+      } else if (event.data.type === "error" && event.data.stage === "init") {
+        cleanup();
+        worker.terminate();
+        reject(new Error("Gesture worker initialization failed"));
+      }
+    };
+    const handleError = () => {
+      cleanup();
+      worker.terminate();
+      reject(new Error("Gesture worker failed"));
+    };
+    worker.addEventListener("message", handleMessage);
+    worker.addEventListener("error", handleError);
+    worker.postMessage({ type: "init" });
+  }).catch(error => {
+    gestureWorkerPromise = null;
+    throw error;
+  });
+  return gestureWorkerPromise;
+}
+
 const slides: Slide[] = [
   { id: "intro", eyebrow: "01 / PROFILE", title: "Vidya Singh", short: "AI engineer building systems that can see, reason and respond.", description: "Computer Science & Artificial Intelligence student in Kolkata, focused on reliable computer vision, full-stack workflows and production-ready software.", tags: ["Computer Vision", "AI / ML", "Software Engineering"], accent: "#d6b875", stat: "2026", statLabel: "B.Tech · MSIT" },
   { id: "spare", eyebrow: "02 / FEATURED BUILD", title: "Spare Part Recognition", short: "A vision system for identifying real-world industrial components.", description: "Modular Python and OpenCV recognition with preprocessing, feature matching, metadata lookup, structured predictions and evaluation reports—designed for reliable end-to-end use.", tags: ["Python", "OpenCV", "FastAPI-ready"], link: "https://github.com/vidyaaaas/spare-part-recognition", accent: "#b8aa94", stat: "E2E", statLabel: "Recognition workflow" },
@@ -15,6 +52,18 @@ const slides: Slide[] = [
 
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
+function MiniatureScene({ slide, expanded = false }: { slide: Slide; expanded?: boolean }) {
+  return <span className={`miniScene${expanded ? " expanded" : ""}`} data-scene={slide.id} aria-hidden="true">
+    <span className="sceneBackdrop" />
+    <span className="sceneBeam" />
+    <span className="sceneArchitecture" />
+    <span className="sceneCore" />
+    <span className="sceneFloor" />
+    <span className="sceneDust" />
+    <span className="sceneCaption"><i />{slide.stat}</span>
+  </span>;
+}
+
 export default function Home() {
   const [selected, setSelected] = useState(0);
   const [open, setOpen] = useState<Slide | null>(null);
@@ -24,7 +73,7 @@ export default function Home() {
   const [camera, setCamera] = useState<"idle" | "loading" | "live" | "error">("idle");
   const [gesture, setGesture] = useState("Move to explore");
   const [handSeen, setHandSeen] = useState(false);
-  const drag = useRef({ active: false, x: 0, moved: 0 });
+  const drag = useRef<{ active: boolean; x: number; moved: number; index: number | null }>({ active: false, x: 0, moved: 0, index: null });
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const orbitRaf = useRef(0);
@@ -37,7 +86,10 @@ export default function Home() {
   const gestureRef = useRef(gesture);
   const handSeenRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
-  const landmarkerRef = useRef<{ close: () => void } | null>(null);
+  const gestureWorkerRef = useRef<Worker | null>(null);
+  const workerMessageHandlerRef = useRef<((event: MessageEvent<GestureWorkerMessage>) => void) | null>(null);
+  const framePendingRef = useRef(false);
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const updatePaused = useCallback((next: boolean) => {
     if (pausedRef.current === next) return;
@@ -59,7 +111,8 @@ export default function Home() {
 
   const paintOrbit = useCallback((rotation: number) => {
     const nearest = mod(Math.round(-rotation / 60), slides.length);
-    if (nearest !== selectedRef.current) {
+    const selectionChanged = nearest !== selectedRef.current;
+    if (selectionChanged) {
       selectedRef.current = nearest;
       setSelected(nearest);
     }
@@ -69,14 +122,17 @@ export default function Home() {
       const angle = (rotation + i * 60) * Math.PI / 180;
       const sine = Math.sin(angle);
       const depth = Math.cos(angle);
-      card.style.setProperty("--x", `${sine * 43}vw`);
-      card.style.setProperty("--y", `${Math.abs(sine) * 11 + (1 - depth) * 9}vh`);
-      card.style.setProperty("--s", `${.58 + (depth + 1) * .27}`);
-      card.style.setProperty("--o", `${.18 + (depth + 1) * .41}`);
-      card.style.setProperty("--z", `${Math.round((depth + 1) * 50)}`);
-      const active = nearest === i;
-      card.classList.toggle("active", active);
-      card.setAttribute("aria-selected", String(active));
+      const x = (sine * 43).toFixed(3);
+      const y = (Math.abs(sine) * 11 + (1 - depth) * 9).toFixed(3);
+      const scale = (.58 + (depth + 1) * .27).toFixed(4);
+      card.style.transform = `translate3d(-50%,-50%,0) translate3d(${x}vw,${y}vh,0) scale(${scale})`;
+      card.style.opacity = `${.18 + (depth + 1) * .41}`;
+      if (selectionChanged) {
+        card.style.zIndex = `${Math.round((depth + 1) * 50)}`;
+        const active = nearest === i;
+        card.classList.toggle("active", active);
+        card.setAttribute("aria-selected", String(active));
+      }
     });
   }, []);
 
@@ -107,12 +163,21 @@ export default function Home() {
 
   useEffect(() => () => {
     cancelAnimationFrame(handRaf.current);
-    landmarkerRef.current?.close();
+    if (gestureWorkerRef.current && workerMessageHandlerRef.current) {
+      gestureWorkerRef.current.removeEventListener("message", workerMessageHandlerRef.current);
+    }
     streamRef.current?.getTracks().forEach(track => track.stop());
   }, []);
 
   useEffect(() => {
     if (!localStorage.getItem("gesture-guide-seen")) setGuideOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
+    const timer = window.setTimeout(() => { loadGestureWorker().catch(() => undefined); }, 1400);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const closeGuide = () => {
@@ -139,8 +204,9 @@ export default function Home() {
   const startCamera = async () => {
     if (camera === "live" || camera === "loading") return;
     setCamera("loading");
+    let acquiredStream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const streamRequest = navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 320 },
           height: { ideal: 240 },
@@ -148,47 +214,21 @@ export default function Home() {
           facingMode: "user",
         },
         audio: false,
-      });
+      }).then(stream => { acquiredStream = stream; return stream; });
+      const workerRequest = loadGestureWorker();
+      const [stream, worker] = await Promise.all([streamRequest, workerRequest]);
       streamRef.current = stream;
-      if (!videoRef.current) return;
+      if (!videoRef.current) throw new Error("Camera preview unavailable");
       videoRef.current.srcObject = stream; await videoRef.current.play();
-      const vision = await import("@mediapipe/tasks-vision");
-      const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
-      const modelAssetPath = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
-      const options = {
-        baseOptions: { modelAssetPath, delegate: "GPU" as const },
-        runningMode: "VIDEO" as const,
-        numHands: 1,
-        minHandDetectionConfidence: .55,
-        minHandPresenceConfidence: .55,
-        minTrackingConfidence: .55,
-      };
-      let landmarker;
-      try {
-        landmarker = await vision.HandLandmarker.createFromOptions(files, options);
-      } catch {
-        landmarker = await vision.HandLandmarker.createFromOptions(files, {
-          ...options,
-          baseOptions: { modelAssetPath, delegate: "CPU" as const },
-        });
-      }
-      landmarkerRef.current = landmarker;
+      gestureWorkerRef.current = worker;
       setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, lastIndexY = 0.5, lastTap = 0, tapArmed = false;
       let lastInference = 0;
       let lastVideoTime = -1;
       const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
       const inferenceInterval = 1000 / (mobile ? 15 : 24);
-      const track = (now: number) => {
-        const video = videoRef.current;
-        if (!video || video.readyState < 2 || document.hidden || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
-          handRaf.current = requestAnimationFrame(track);
-          return;
-        }
-        lastInference = now;
-        lastVideoTime = video.currentTime;
-        const result = landmarker.detectForVideo(video, now);
-        const hand = result.landmarks?.[0];
+
+      const processHand = (hand: HandPoint[] | null, now: number) => {
         if (hand) {
           const x = 1 - hand[8].x;
           smoothedX = smoothedX * .7 + x * .3;
@@ -225,23 +265,76 @@ export default function Home() {
           updatePaused(false);
           updateGesture("NO HAND · AUTO ORBIT");
         }
+      };
+
+      if (workerMessageHandlerRef.current) worker.removeEventListener("message", workerMessageHandlerRef.current);
+      const handleWorkerMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+        if (event.data.type === "result") {
+          framePendingRef.current = false;
+          processHand(event.data.hand, event.data.timestamp);
+        } else if (event.data.type === "error" && event.data.stage === "frame") {
+          framePendingRef.current = false;
+        }
+      };
+      workerMessageHandlerRef.current = handleWorkerMessage;
+      worker.addEventListener("message", handleWorkerMessage);
+
+      const track = (now: number) => {
+        const video = videoRef.current;
+        if (!video || video.readyState < 2 || document.hidden || framePendingRef.current || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
+          handRaf.current = requestAnimationFrame(track);
+          return;
+        }
+        lastInference = now;
+        lastVideoTime = video.currentTime;
+        framePendingRef.current = true;
+        if (typeof createImageBitmap === "function") {
+          createImageBitmap(video).then(frame => {
+            worker.postMessage({ type: "frame", frame, timestamp: now }, [frame]);
+          }).catch(() => { framePendingRef.current = false; });
+        } else {
+          const canvas = captureCanvasRef.current ?? document.createElement("canvas");
+          captureCanvasRef.current = canvas;
+          canvas.width = 320; canvas.height = 240;
+          const context = canvas.getContext("2d", { alpha: false });
+          if (context) {
+            context.drawImage(video, 0, 0, 320, 240);
+            const frame = context.getImageData(0, 0, 320, 240);
+            worker.postMessage({ type: "frame", frame, timestamp: now }, [frame.data.buffer]);
+          } else framePendingRef.current = false;
+        }
         handRaf.current = requestAnimationFrame(track);
       };
       handRaf.current = requestAnimationFrame(track);
     } catch {
-      streamRef.current?.getTracks().forEach(track => track.stop());
+      (streamRef.current ?? acquiredStream)?.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+      framePendingRef.current = false;
       setCamera("error");
       updateGesture("Camera unavailable · use pointer");
     }
   };
 
-  const pointerDown = (e: React.PointerEvent) => { drag.current = { active: true, x: e.clientX, moved: 0 }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); updatePaused(true); };
+  const activateSlide = useCallback((index: number) => {
+    const wasSelected = selectedRef.current === index;
+    updatePaused(true);
+    setOrbitRotation(-index * 60);
+    if (wasSelected) setOpen(slides[index]);
+  }, [setOrbitRotation, updatePaused]);
+
+  const pointerDown = (e: React.PointerEvent) => {
+    const card = (e.target as HTMLElement).closest<HTMLElement>("[data-orbit-index]");
+    const index = card ? Number(card.dataset.orbitIndex) : null;
+    drag.current = { active: true, x: e.clientX, moved: 0, index };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    updatePaused(true);
+  };
   const pointerMove = (e: React.PointerEvent) => { if (!drag.current.active) return; const dx=e.clientX-drag.current.x; drag.current.x=e.clientX; drag.current.moved+=Math.abs(dx); setOrbitRotation(rotRef.current + dx*.16); updateGesture("Drag · orbit"); };
-  const pointerUp = () => { if (drag.current.moved < 8) setOpen(slides[selectedRef.current]); drag.current.active=false; };
-  const pointerCancel = () => { drag.current.active = false; };
+  const pointerUp = () => { if (drag.current.moved < 8 && drag.current.index !== null) activateSlide(drag.current.index); drag.current.active=false; drag.current.index=null; };
+  const pointerCancel = () => { drag.current.active = false; drag.current.index = null; };
 
   return <main className="universe">
+    <div className="cinemaAtmosphere" aria-hidden="true"><span className="lightSweep sweepOne"/><span className="lightSweep sweepTwo"/><span className="filmGrain"/><span className="vignette"/></div>
     <div className="stars" aria-hidden="true" />
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Vidya Singh home"><span>VS</span><b>VIDYA SINGH</b></a>
@@ -251,12 +344,14 @@ export default function Home() {
 
     <section className="hero" id="top">
       <div className="heroCopy">
-        <p className="kicker">AI ENGINEER · CREATIVE DEVELOPER</p>
+        <p className="kicker"><span>SELECTED WORKS</span> AI ENGINEER · CREATIVE DEVELOPER</p>
         <h1 className="portfolioTitle">Building<br/><em>intelligent</em><br/>experiences.</h1>
-        <p className="intro">I build intelligent experiences where computer vision meets thoughtful software.</p>
+        <p className="intro">A cinematic collection of intelligent systems where computer vision, research and thoughtful software move as one.</p>
+        <div className="cinemaCredits"><span><b>DISCIPLINE</b>AI / VISION / SOFTWARE</span><span><b>EDITION</b>PORTFOLIO · 2026</span></div>
       </div>
       <div className="orbitWrap" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel}>
-        <div className="horizon" />
+        <div className="horizon"><span className="orbitHalo"/></div>
+        <div className="orbitStage" aria-hidden="true"><span/><i/></div>
         <div className="orbit" role="listbox" aria-label="Portfolio slides">
           {slides.map((s,i) => {
             const angle = i * 60 * Math.PI / 180;
@@ -265,8 +360,11 @@ export default function Home() {
             const y = Math.abs(Math.sin(angle)) * 11 + (1-z)*9;
             const scale = .58 + (z+1)*.27;
             const opacity = .18 + (z+1)*.41;
-            return <button key={s.id} ref={element => { cardRefs.current[i] = element; }} className={`orbCard ${selected===i?"active":""}`} style={{"--x":`${x}vw`,"--y":`${y}vh`,"--s":scale,"--o":opacity,"--accent":s.accent,"--z":Math.round((z+1)*50)} as React.CSSProperties} onClick={(e)=>{e.stopPropagation();const wasSelected=selectedRef.current===i;updatePaused(true);setOrbitRotation(-i*60);if(wasSelected)setOpen(s)}} role="option" aria-selected={selected===i}>
-              <span className="cardNum">0{i+1}</span><span className="cardEyebrow">{s.eyebrow.split(" / ")[1]}</span><strong>{s.title}</strong><span className="cardLine"/><small>{s.short}</small><span className="cardAction">TAP TO ENTER ↗</span>
+            return <button key={s.id} data-orbit-index={i} ref={element => { cardRefs.current[i] = element; }} className={`orbCard ${selected===i?"active":""}`} style={{"--x":`${x}vw`,"--y":`${y}vh`,"--s":scale,"--o":opacity,"--accent":s.accent,"--z":Math.round((z+1)*50)} as React.CSSProperties} onClick={(e)=>{e.stopPropagation();if(e.detail===0)activateSlide(i)}} role="option" aria-selected={selected===i}>
+              <span className="cardHeader"><span className="cardNum">0{i+1}</span><span className="cardEyebrow">{s.eyebrow.split(" / ")[1]}</span></span>
+              <MiniatureScene slide={s}/>
+              <span className="cardCopy"><strong>{s.title}</strong><small>{s.short}</small></span>
+              <span className="cardAction"><i/> ENTER THE SCENE <b>↗</b></span>
             </button>
           })}
         </div>
@@ -284,10 +382,10 @@ export default function Home() {
       </aside>
     </section>
 
-    {open && <section className="detail" style={{"--accent":open.accent} as React.CSSProperties} aria-modal="true" role="dialog">
-      <div className="detailGlow"/><button className="close" onClick={()=>setOpen(null)} aria-label="Close slide">CLOSE <span>×</span></button>
+    {open && <section className="detail" data-scene={open.id} style={{"--accent":open.accent} as React.CSSProperties} aria-modal="true" role="dialog">
+      <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close" onClick={()=>setOpen(null)} aria-label="Close slide">CLOSE <span>×</span></button>
       <div className="detailInner">
-        <p className="reveal r1">{open.eyebrow}</p><h2 className="reveal r2">{open.title}</h2>
+        <p className="reveal r1"><span>VIDYA SINGH · SELECTED WORKS</span>{open.eyebrow}</p><h2 className="reveal r2">{open.title}</h2>
         <div className="detailGrid reveal r3"><p>{open.description}</p><div className="metric"><b>{open.stat}</b><span>{open.statLabel}</span></div></div>
         <div className="tags reveal r4">{open.tags.map(t=><span key={t}>{t}</span>)}</div>
         <div className="detailActions reveal r5">{open.link && <a href={open.link} target="_blank">EXPLORE PROJECT ↗</a>}<a href="/Vidya_Singh_Resume.pdf" target="_blank">VIEW RÉSUMÉ ↗</a></div>

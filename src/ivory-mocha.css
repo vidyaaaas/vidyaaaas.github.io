@@ -1,0 +1,130 @@
+:root{
+  --ivory:#f2ede0;
+  --ivory-bright:#fffaf0;
+  --cream:#e8d8c7;
+  --pearl:#d8bdab;
+  --mocha:#453229;
+  --mocha-mid:#5d4338;
+  --mocha-soft:#765548;
+  --mocha-deep:#2c1e19;
+  --rosewood:#7b4e49;
+  --nude-copper:#b88f7c;
+  --smoked-mauve:#896568;
+  --cinema-black:var(--mocha);
+  --cinema-ink:var(--ivory);
+  --cinema-gold:var(--pearl);
+  --cinema-gold-bright:var(--ivory-bright);
+  --cinema-smoke:#c9b8a9;
+}
+
+html,body{background:var(--mocha);color:var(--ivory);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+button,a{-webkit-tap-highlight-color:transparent}
+.universe{
+  background:
+    radial-gradient(ellipse at 73% 42%,#f2ede045 0%,#d2aa912e 12%,#8b66562b 28%,transparent 53%),
+    radial-gradient(ellipse at 106% 94%,#8965684a 0%,#7b4e4920 27%,transparent 52%),
+    radial-gradient(ellipse at 22% 112%,#f2ede027 0%,#6e504439 33%,transparent 58%),
+    linear-gradient(132deg,#34241e 0%,#453229 43%,#5b4035 68%,#2f201b 100%)!important;
+}
+.cinemaAtmosphere::before,.cinemaAtmosphere::after{content:"";position:absolute;display:block;pointer-events:none;border-radius:50%;opacity:.46}
+.cinemaAtmosphere::before{width:48vw;height:28vw;right:-12vw;top:12vh;background:radial-gradient(ellipse at 35% 38%,#fffaf0b8 0%,#f2ede068 22%,#d8bdab36 48%,transparent 71%);transform:rotate(-18deg);box-shadow:inset 18px -14px 55px #9f74615c}
+.cinemaAtmosphere::after{width:38vw;height:18vw;left:18vw;bottom:-7vw;background:radial-gradient(ellipse at 50% 24%,#f2ede065,#d5b8a33b 45%,transparent 72%);transform:rotate(9deg)}
+.sweepOne{background:linear-gradient(92deg,transparent 3%,#fff8eb00 15%,#fff8eb42 40%,#fffdf3a8 50%,#f0cdbd31 59%,transparent 84%);opacity:.54}
+.sweepTwo{background:linear-gradient(88deg,transparent,#f8e1d126 30%,#fffaf082 50%,transparent 74%);opacity:.36}
+.filmGrain{opacity:.014;background-image:repeating-radial-gradient(circle at 17% 32%,#fffaf0 0 1px,transparent 1px 5px)}
+.vignette{background:radial-gradient(ellipse at 61% 49%,transparent 20%,#2c1e1924 56%,#2619148c 100%),linear-gradient(180deg,#2c1e196b 0,transparent 24%,transparent 76%,#2c1e198c 100%)}
+.stars{opacity:.07!important;mix-blend-mode:soft-light}
+
+.topbar{border-color:#f2ede02e;background:linear-gradient(180deg,#392720ed,transparent)}
+.brand{color:var(--ivory)}
+.brand span{border-color:#f2ede098;color:var(--ivory-bright);background:linear-gradient(135deg,#f2ede01f,transparent)}
+.status{color:#d6c7b9}.status i{background:var(--cream)}.status i.live{background:var(--ivory-bright);box-shadow:0 0 18px #fff7e6}
+nav button,nav a{color:#d4c4b7!important}nav button:hover,nav a:hover{color:var(--ivory-bright)!important}
+
+.hero::before{border-color:#f2ede015}.hero::after{background:linear-gradient(90deg,#f2ede055,transparent 34%,transparent 66%,#f2ede055)}
+.heroCopy::before{background:linear-gradient(90deg,#34241ef7 0%,#3b2922e8 51%,#4532299c 72%,transparent 100%)!important}
+.kicker{color:#dfd2c5}.kicker span{color:var(--ivory-bright);border-color:var(--ivory)}
+.hero h1.portfolioTitle{color:var(--ivory);text-shadow:0 4px 25px #2b1c18a8,0 0 50px #fffaf00b}
+.hero h1.portfolioTitle em{color:var(--ivory-bright);text-shadow:0 0 28px #fff5e65c,0 3px 18px #2b1c18b5}
+.heroCopy .intro{color:#e1d5c9}.cinemaCredits{color:#c7b5a7}.cinemaCredits b{color:var(--ivory-bright)}
+
+.horizon{border-color:#f2ede02e!important;box-shadow:0 0 120px #fff4df18,inset 0 0 90px #f2ede00d!important}
+.horizon::before{border-color:#f2ede020}.horizon::after{border-color:#f2ede029}
+.orbitHalo{border-color:#fffaf06e;box-shadow:0 0 62px #fff4de42}
+.orbitStage{border-color:#f2ede042;background:radial-gradient(ellipse,#fffaf02a 0,#e5cbb51a 30%,transparent 64%)}
+.orbitStage span{border-color:#f2ede01a}.orbitStage i{border-color:#f2ede038;background:#f2ede018;box-shadow:0 0 50px #fffaf024}
+
+.universe .orbCard{
+  border-color:#fff8ebbd!important;
+  border-radius:18px;
+  background:linear-gradient(145deg,#f7f1e7 0%,#e7d7c8 47%,#c9aa98 100%)!important;
+  box-shadow:0 34px 90px #2a1a16a8,0 0 0 1px #fffaf0cc inset,0 10px 32px #fffaf01d inset,0 0 34px #fff5df2b!important;
+}
+.universe .orbCard::before{border-radius:inherit!important;background:linear-gradient(116deg,#ffffff8f 0%,#fffaf01d 23%,transparent 53%,#a47a6829 100%)!important;mix-blend-mode:soft-light}
+.universe .orbCard::after{border-radius:13px;border-color:#fffaf06e;background:linear-gradient(180deg,#fffdf377,transparent 27%,transparent 70%,#6d4d4236)}
+.universe .orbCard.active{border-color:color-mix(in srgb,var(--accent) 36%,#fffdf3)!important;box-shadow:0 40px 110px #2a1a16c9,0 0 0 1px #fffaf0c2 inset,0 0 55px color-mix(in srgb,var(--accent) 28%,transparent)!important}
+.cardNum{color:color-mix(in srgb,var(--accent) 54%,#5b4035)}.cardEyebrow{color:#806458}
+
+.miniScene{border-color:#fffaf06b;border-radius:12px;background:var(--mocha-deep);box-shadow:inset 0 0 55px #261914bf,inset 0 1px 0 #fffaf04d,0 12px 28px #2a1a1678}
+.sceneBackdrop{background:radial-gradient(circle at 58% 30%,color-mix(in srgb,var(--accent) 42%,#fff4df),transparent 30%),linear-gradient(155deg,color-mix(in srgb,var(--accent) 24%,#765548) 0%,#453229 48%,#291b17 100%)}
+.sceneBackdrop::before{background:linear-gradient(90deg,#2c1e1987,transparent 44%,#2c1e1966),linear-gradient(180deg,transparent 55%,#251813b8 100%)}
+.sceneBeam{background:linear-gradient(90deg,transparent,#fffaf000 15%,#fffdf3a1 52%,transparent);opacity:.66}
+.sceneFloor{background:repeating-linear-gradient(90deg,#f2ede000 0 20px,#f2ede027 21px),repeating-linear-gradient(0deg,#0000 0 20px,#f2ede027 21px),radial-gradient(ellipse at center,#fff8e739,transparent 58%);border-color:#f2ede06b}
+.sceneDust{opacity:.28;background-image:radial-gradient(circle at 12% 24%,#fffaf0 0 1px,transparent 1.3px),radial-gradient(circle at 72% 46%,#f2d9c4 0 1px,transparent 1.2px),radial-gradient(circle at 43% 71%,#fffaf0 0 .7px,transparent 1px)}
+.sceneCaption{color:color-mix(in srgb,var(--accent) 28%,var(--ivory-bright))}.sceneCaption i{background:color-mix(in srgb,var(--accent) 36%,var(--ivory))}
+
+.miniScene[data-scene="intro"] .sceneArchitecture{background:linear-gradient(90deg,#f2ede014,#fffaf052,#d8bdab15)}
+.miniScene[data-scene="intro"] .sceneCore{background:linear-gradient(105deg,#8b6656,#fffaf0 43%,#d9c0ae 52%,#604438);box-shadow:0 0 32px #fff7e75e,16px 18px 20px #2a1a1670}
+.miniScene[data-scene="intro"] .sceneCore::after{border-color:#fffaf0b0;background:linear-gradient(180deg,#ffffff56,transparent)}
+.miniScene[data-scene="spare"] .sceneArchitecture{border-color:#f2ede082;box-shadow:inset 0 0 0 13px #3c2a24,inset 0 0 0 14px #f2ede066,0 0 28px #fffaf033}
+.miniScene[data-scene="spare"] .sceneArchitecture::before{border-color:#dbc5b6;box-shadow:0 0 12px #fffaf070}
+.miniScene[data-scene="spare"] .sceneCore{border-color:#d5b8a4;background:radial-gradient(circle,#453229 0 24%,#fffaf0 25% 31%,#7d5d50 34% 56%,#d9c1af 58%);box-shadow:0 0 28px #fff8e74d,0 22px 20px #2b1c18a8}
+.miniScene[data-scene="spare"] .sceneCore::after{border-color:#fffaf0a6}
+.miniScene[data-scene="landmark"] .sceneArchitecture{background:linear-gradient(180deg,#f2ede08a,#765548 72%);box-shadow:0 0 30px #fffaf032}
+.miniScene[data-scene="landmark"] .sceneArchitecture::after{background:linear-gradient(90deg,transparent,#fffaf0b8,transparent)}
+.miniScene[data-scene="landmark"] .sceneCore{background:#fffaf0;box-shadow:0 0 9px #fffdf3,0 0 27px #f7d8c0}
+.miniScene[data-scene="research"] .sceneArchitecture{border-color:#f2ede082;background:linear-gradient(135deg,#f2ede035,#4f382fcf);box-shadow:17px 12px 0 #3d2a23c7,18px 13px 0 #f2ede055,34px 24px 0 #2c1e19a8,35px 25px 0 #fffaf042}
+.miniScene[data-scene="research"] .sceneArchitecture::before{background:#fffaf0;box-shadow:0 13px 0 #f2ede070,0 26px 0 #f2ede046}
+.miniScene[data-scene="research"] .sceneCore{background:radial-gradient(circle at 34% 30%,#fffdf3,#f2ede0 20%,#b99783 58%,#453229);box-shadow:0 0 30px #fff7e773}
+.miniScene[data-scene="deepfake"] .sceneArchitecture{border-color:#f2ede075;box-shadow:0 0 0 9px #f2ede01a,0 0 0 10px #fffaf043,0 0 32px #fffaf02e}
+.miniScene[data-scene="deepfake"] .sceneArchitecture::after{background:linear-gradient(#fffaf0,transparent);box-shadow:0 0 11px #fffaf0}
+.miniScene[data-scene="deepfake"] .sceneCore{background:linear-gradient(90deg,#3b2822 0 49%,#f2ede0 50% 51%,#715043 52%);box-shadow:-13px 0 24px #f4d8c83b,13px 0 24px #fffaf02e}
+.miniScene[data-scene="deepfake"] .sceneCore::before,.miniScene[data-scene="deepfake"] .sceneCore::after{background:#fffaf0;box-shadow:0 0 10px #fffaf0}
+.miniScene[data-scene="experience"] .sceneArchitecture{background:repeating-linear-gradient(90deg,transparent 0 12%,#f2ede046 13% 20%,transparent 21% 31%);border-color:#f2ede083}
+.miniScene[data-scene="experience"] .sceneArchitecture::before{background:repeating-linear-gradient(0deg,#453229 0 10%,#d9c2b1 11% 13%,#34241e 14% 19%)}
+.miniScene[data-scene="experience"] .sceneCore{background:linear-gradient(#fffdf3,#e7cfbe);box-shadow:0 0 12px #fffaf0,0 0 32px #f2d6c0}
+
+.orbCard .cardCopy strong{color:var(--mocha);text-shadow:0 2px 12px #fffaf063}
+.orbCard .cardCopy small{color:#7b5e52}.cardAction{border-color:#7a594835;color:#64483e}.cardAction i{background:#765548}
+.gestureBtn{color:var(--mocha);background:linear-gradient(110deg,#d3b8a5,#fffaf0 48%,#d8bdab);border-radius:999px;clip-path:none;box-shadow:0 12px 36px #2b1c1885,0 0 26px #fffaf045,inset 0 1px 0 #fff}
+.pause{border-color:#f2ede08c;background:#453229db;color:var(--ivory);border-radius:50%;clip-path:none}
+.controls p{color:#c5b5a8}.controls p b{color:var(--ivory)}
+.counter{color:#cbbbae}.counter b{color:var(--ivory-bright);text-shadow:0 0 20px #fffaf04a}
+.gesturePrompt,.gestureDock{border-color:#f2ede080;border-radius:18px;background:linear-gradient(135deg,#65493de8,#3b2923f5);box-shadow:0 24px 70px #2a1a16a6,0 0 30px #fffaf021,inset 0 1px 0 #fffaf03d;overflow:hidden}
+.gesturePrompt.hasError{border-color:var(--ivory);background:linear-gradient(135deg,#765548ef,#3b2923f7)}
+.gesturePrompt .handGlyph,.cameraError{color:var(--ivory-bright)}.gesturePrompt small{color:#d5c5b7}
+.feedWrap{border-color:#f2ede046}.feedWrap b{color:var(--ivory-bright)}.scanLine{background:var(--ivory);box-shadow:0 0 12px #fffaf0}
+
+.detail{background:radial-gradient(ellipse at 74% 42%,color-mix(in srgb,var(--accent) 22%,#f2ede04f),transparent 36%),linear-gradient(127deg,#34241e 0%,#453229 55%,#2c1e19 100%)!important}
+.detail::before{background:radial-gradient(ellipse at center,transparent 25%,#2a1a1685 100%)}
+.detail::after{background:linear-gradient(90deg,transparent,#fffaf06b,transparent)}
+.detailGlow{background:radial-gradient(circle,#fffaf02e,transparent 64%)}
+.detail h2{color:var(--ivory);text-shadow:0 12px 40px #2a1a16a8}.detailInner>p{color:var(--ivory-bright)}.detailInner>p span{color:#c6b4a5;border-color:#f2ede055}
+.detailGrid{border-color:#f2ede052}.detailGrid>p{color:#eadfd4}.metric b{color:var(--ivory-bright)}.metric span{color:#c5b2a3}
+.tags span{border-color:#f2ede046;border-radius:999px;color:#dacabd}.detailActions a{color:var(--ivory-bright);border-color:var(--ivory)}
+.close{color:#cbb9aa}.close span{color:var(--ivory-bright)}
+
+.contactPanel,.guidePanel{background:radial-gradient(ellipse at 70% 35%,#f2ede03d 0%,transparent 35%),linear-gradient(125deg,#34241e,#453229 55%,#2c1e19)}
+.contactInner>p,.guideInner>p{color:var(--ivory-bright)}.contactInner h2,.guideInner h2{color:var(--ivory)}.contactInner h2 em,.guideInner h2 em{color:var(--ivory-bright)}
+.contactList{border-color:#f2ede042}.contactList>div{border-color:#f2ede020}.contactList small{color:#c7b5a7}.contactList strong,.contactList a{color:var(--ivory)}
+.gestureGrid{border-color:#f2ede03f}.gestureGrid article{border-color:#f2ede021;background:linear-gradient(145deg,#f2ede00d,transparent)}.gestureGrid article>span{color:var(--ivory-bright);filter:none}.gestureGrid small{color:var(--ivory-bright)}.gestureGrid p{color:#d0c0b2}
+.guideStart{color:var(--mocha);border-radius:999px;background:linear-gradient(110deg,#d3b8a5,#fffaf0,#d8bdab);box-shadow:inset 0 1px 0 #fff}
+footer{border-color:#f2ede027;color:#beac9f}
+
+@media(max-width:800px){
+  .heroCopy::before{background:linear-gradient(180deg,#34241efa 0%,#3e2b24ee 68%,transparent 100%)!important}
+  .universe .orbCard{box-shadow:0 20px 48px #2a1a16a6,0 0 0 1px #fffaf087 inset!important}
+  .sweepOne{mix-blend-mode:normal;opacity:.32}
+  .cinemaAtmosphere::before{width:88vw;height:55vw;right:-42vw;top:35vh;opacity:.33}
+  .cinemaAtmosphere::after{width:76vw;height:34vw;left:-18vw;bottom:7vh;opacity:.26}
+}

@@ -140,6 +140,8 @@ nav button:hover,nav a:hover{color:#f0d49b!important}
 .counter{right:4.5vw;bottom:7vh;color:#716c63;font:9px var(--display-sans);letter-spacing:.14em}.counter b{color:#eddfc1;font:42px/1 var(--display-serif);font-style:italic}.counter span{margin-left:6px}
 .gesturePrompt{right:4.5vw!important;top:8vh!important;width:230px;border-color:#d8b9784a;background:linear-gradient(135deg,#17130ee8,#050505f5);box-shadow:0 24px 70px #000e,0 0 30px #d8b9780d;padding:18px 17px}
 .gesturePrompt .handGlyph{color:#e0c17f}.gesturePrompt b{font-family:var(--display-sans);letter-spacing:.18em}.gesturePrompt small{color:#887f70}
+.gesturePrompt.hasError{border-color:#e0c17f;background:linear-gradient(135deg,#21170ce8,#060504f7)}
+.cameraError{position:absolute;left:4.5vw;bottom:3.4vh;z-index:124;color:#e0c17f;font:7px var(--display-sans);letter-spacing:.14em}
 .gestureDock{right:4.5vw!important;top:7vh!important;border-color:#d8b9785a;background:#070605;box-shadow:0 28px 90px #000;transition:opacity .3s,transform .3s}
 .feedWrap{border-color:#d8b9782e}.feedWrap b{color:#e4c780}.scanLine{background:#e2c37d;box-shadow:0 0 10px #e2c37d}
 
@@ -191,6 +193,7 @@ footer{height:46px;padding:0 4.5vw;border-color:#d8b9781c;color:#6f685d;font:7px
   .cardHeader{height:25px;padding:0 6px}.cardNum,.cardEyebrow{font-size:6px}.miniScene{height:48%}.sceneCaption{font-size:5px;right:5px;bottom:4px}.sceneCaption i{width:10px;margin-right:4px}
   .cardCopy{padding:9px 7px 5px}.orbCard .cardCopy strong{font-size:19px;line-height:.9}.orbCard .cardCopy small{display:none}.cardAction{padding:7px;font-size:5.5px}.cardAction i{width:10px}.cardAction b{font-size:9px}
   .controls{left:4vw;bottom:2.7vh;gap:11px}.gestureBtn{padding:12px 14px;font-size:6.5px}.pause{width:36px;height:36px}.counter{right:4vw;bottom:3.2vh}.counter b{font-size:30px}
+  .cameraError{left:4vw;bottom:8.4vh;max-width:52vw;font-size:6px;line-height:1.45}
   .gesturePrompt{top:auto!important;right:4vw!important;bottom:12vh!important;width:178px;padding:12px}.gesturePrompt .handGlyph{font-size:24px}.gesturePrompt b{font-size:7px}.gesturePrompt small{font-size:6px}
   .gestureDock{top:9px!important;right:3vw!important;width:250px}
   .sweepTwo{display:none}.sweepOne{width:82vw;left:26%;opacity:.24}.filmGrain{opacity:.045}

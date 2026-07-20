@@ -10,12 +10,37 @@ type HandTracker = {
   close: () => void;
 };
 
+const gestureTimingMarks = ["activation-click", "get-user-media-called", "get-user-media-resolved", "camera-first-frame", "model-load-start", "model-load-finish", "first-hand-detected"];
+const gestureTimingMeasures = ["click-to-get-user-media", "camera-resolved-to-visible", "hand-model-load", "click-to-first-hand", "model-ready-to-first-hand"];
+
+function resetGestureTimings() {
+  gestureTimingMarks.forEach(name => performance.clearMarks(`gesture:${name}`));
+  gestureTimingMeasures.forEach(name => performance.clearMeasures(`gesture:${name}`));
+}
+
+function markGestureTiming(name: string) {
+  performance.mark(`gesture:${name}`);
+}
+
+function measureGestureTiming(measureName: string, label: string, startMark: string, endMark: string) {
+  try {
+    const entryName = `gesture:${measureName}`;
+    performance.measure(entryName, `gesture:${startMark}`, `gesture:${endMark}`);
+    const entries = performance.getEntriesByName(entryName, "measure");
+    const entry = entries[entries.length - 1];
+    if (entry) console.info(`[Gesture timing] ${label}: ${entry.duration.toFixed(1)} ms`);
+  } catch (error) {
+    console.warn(`[Gesture timing] Could not measure ${label}`, error);
+  }
+}
+
 const handModelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 let handTrackerPromise: Promise<HandTracker> | null = null;
 
 function loadHandTracker() {
   if (handTrackerPromise) return handTrackerPromise;
   handTrackerPromise = (async () => {
+    markGestureTiming("model-load-start");
     const vision = await import("@mediapipe/tasks-vision");
     const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
     const options = {
@@ -26,14 +51,18 @@ function loadHandTracker() {
       minHandPresenceConfidence: .48,
       minTrackingConfidence: .48,
     };
+    let tracker: HandTracker;
     try {
-      return await vision.HandLandmarker.createFromOptions(files, options) as HandTracker;
+      tracker = await vision.HandLandmarker.createFromOptions(files, options) as HandTracker;
     } catch {
-      return await vision.HandLandmarker.createFromOptions(files, {
+      tracker = await vision.HandLandmarker.createFromOptions(files, {
         ...options,
         baseOptions: { modelAssetPath: handModelUrl, delegate: "CPU" as const },
       }) as HandTracker;
     }
+    markGestureTiming("model-load-finish");
+    measureGestureTiming("hand-model-load", "hand-tracking model load start → finish", "model-load-start", "model-load-finish");
+    return tracker;
   })().catch(error => {
     handTrackerPromise = null;
     throw error;
@@ -190,6 +219,9 @@ export default function Home() {
 
   const startCamera = async () => {
     if (camera === "live" || camera === "loading" || camera === "warming") return;
+    resetGestureTimings();
+    markGestureTiming("activation-click");
+    console.info("[Gesture timing] Camera/gesture test started");
     setGuideOpen(false);
     localStorage.setItem("gesture-guide-seen", "true");
     setCameraError("");
@@ -199,7 +231,10 @@ export default function Home() {
     try {
       if (!window.isSecureContext) throw new DOMException("Camera requires HTTPS", "SecurityError");
       if (!navigator.mediaDevices?.getUserMedia) throw new DOMException("Camera API unavailable", "NotSupportedError");
+      markGestureTiming("get-user-media-called");
+      measureGestureTiming("click-to-get-user-media", "button click → getUserMedia call", "activation-click", "get-user-media-called");
       const streamRequest = navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+        markGestureTiming("get-user-media-resolved");
         acquiredStream = stream;
         const track = stream.getVideoTracks()[0];
         track?.applyConstraints({
@@ -213,10 +248,21 @@ export default function Home() {
       const stream = await streamRequest;
       streamRef.current = stream;
       if (!videoRef.current) throw new Error("Camera preview unavailable");
-      videoRef.current.srcObject = stream;
+      const cameraVideo = videoRef.current;
+      let visibleFrameMeasured = false;
+      const markVisibleFrame = () => {
+        if (visibleFrameMeasured) return;
+        visibleFrameMeasured = true;
+        markGestureTiming("camera-first-frame");
+        measureGestureTiming("camera-resolved-to-visible", "getUserMedia resolved → first visible camera frame", "get-user-media-resolved", "camera-first-frame");
+      };
+      const frameVideo = cameraVideo as HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number };
+      if (frameVideo.requestVideoFrameCallback) frameVideo.requestVideoFrameCallback(markVisibleFrame);
+      else cameraVideo.addEventListener("playing", () => requestAnimationFrame(markVisibleFrame), { once: true });
+      cameraVideo.srcObject = stream;
       setCamera("warming");
       updateGesture("CAMERA LIVE · STARTING HAND AI");
-      void videoRef.current.play().catch(() => undefined);
+      void cameraVideo.play().catch(() => undefined);
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       let tracker: HandTracker;
       try {
@@ -232,6 +278,7 @@ export default function Home() {
       let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
       let lastIndexY = 0.5, indexVelocity = 0, lastTap = 0, tapArmed = false, tapReadyAt = 0;
       let fistFrames = 0, openFrames = 0, lostAt = 0, directionFrames = 0;
+      let firstSuccessfulHandDetection = false;
       let directionCandidate: 1 | -1 | null = null;
       let lastInference = 0;
       let lastVideoTime = -1;
@@ -246,6 +293,12 @@ export default function Home() {
 
       const processHand = (hand: HandPoint[] | null, now: number) => {
         if (hand && hand.length >= 21) {
+          if (!firstSuccessfulHandDetection) {
+            firstSuccessfulHandDetection = true;
+            markGestureTiming("first-hand-detected");
+            measureGestureTiming("click-to-first-hand", "button click → first successful hand detection", "activation-click", "first-hand-detected");
+            measureGestureTiming("model-ready-to-first-hand", "hand model ready → first successful hand detection", "model-load-finish", "first-hand-detected");
+          }
           lostAt = 0;
           const x = 1 - hand[8].x;
           smoothedX = smoothedX * .72 + x * .28;

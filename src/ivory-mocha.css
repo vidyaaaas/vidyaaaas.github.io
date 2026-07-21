@@ -34,6 +34,9 @@ button,a{-webkit-tap-highlight-color:transparent}
 .stars{opacity:.045!important;mix-blend-mode:screen}
 .cameraActive .lightSweep{animation:none!important;opacity:.14}
 .cameraActive .orbCard.active .sceneBeam,.cameraActive .orbCard.active .sceneCore{animation-play-state:paused}
+.cameraActive .sceneDust{display:none}
+.feedWrap{contain:layout paint}
+.gestureDock .cameraFeed{contain:strict;backface-visibility:hidden}
 
 .topbar{border-color:#d6b38238;background:linear-gradient(180deg,#000f,#0008 72%,transparent)}
 .brand{color:var(--crystal-ivory)}

@@ -5,9 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Slide = { id: string; eyebrow: string; title: string; short: string; description: string; tags: string[]; link?: string; accent: string; stat: string; statLabel: string };
 
 type HandPoint = { x: number; y: number };
-type HandTracker = {
-  detectForVideo: (source: HTMLVideoElement | HTMLCanvasElement, timestamp: number) => { landmarks?: HandPoint[][] };
-  close: () => void;
+type GestureWorkerMessage =
+  | { type: "ready"; initializationMs: number }
+  | { type: "result"; hand: HandPoint[] | null; timestamp: number; inferenceMs: number }
+  | { type: "error"; stage: "init" | "frame"; timestamp?: number; message?: string };
+type GestureEngine = { worker: Worker; initializationMs: number };
+type FrameVideo = HTMLVideoElement & {
+  requestVideoFrameCallback?: (callback: (now: number) => void) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
 };
 
 const gestureTimingMarks = ["activation-click", "get-user-media-called", "get-user-media-resolved", "camera-first-frame", "model-load-start", "model-load-finish", "first-hand-detected"];
@@ -28,46 +33,46 @@ function measureGestureTiming(measureName: string, label: string, startMark: str
     performance.measure(entryName, `gesture:${startMark}`, `gesture:${endMark}`);
     const entries = performance.getEntriesByName(entryName, "measure");
     const entry = entries[entries.length - 1];
-    if (entry) console.info(`[Gesture timing] ${label}: ${entry.duration.toFixed(1)} ms`);
+    if (entry) console.log(`[Gesture timing] ${label}: ${entry.duration.toFixed(1)} ms`);
   } catch (error) {
     console.warn(`[Gesture timing] Could not measure ${label}`, error);
   }
 }
 
-const handModelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
-let handTrackerPromise: Promise<HandTracker> | null = null;
+let gestureEnginePromise: Promise<GestureEngine> | null = null;
 
-function loadHandTracker() {
-  if (handTrackerPromise) return handTrackerPromise;
-  handTrackerPromise = (async () => {
-    markGestureTiming("model-load-start");
-    const vision = await import("@mediapipe/tasks-vision");
-    const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
-    const options = {
-      baseOptions: { modelAssetPath: handModelUrl, delegate: "GPU" as const },
-      runningMode: "VIDEO" as const,
-      numHands: 1,
-      minHandDetectionConfidence: .48,
-      minHandPresenceConfidence: .48,
-      minTrackingConfidence: .48,
+function loadGestureEngine() {
+  if (gestureEnginePromise) return gestureEnginePromise;
+
+  gestureEnginePromise = new Promise<GestureEngine>((resolve, reject) => {
+    const worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), { type: "module" });
+    const timeout = window.setTimeout(() => finish(new Error("Hand AI initialization timed out")), 60000);
+
+    const finish = (error?: Error, initializationMs = 0) => {
+      window.clearTimeout(timeout);
+      worker.removeEventListener("message", handleMessage);
+      worker.removeEventListener("error", handleError);
+      if (error) {
+        worker.terminate();
+        reject(error);
+      } else resolve({ worker, initializationMs });
     };
-    let tracker: HandTracker;
-    try {
-      tracker = await vision.HandLandmarker.createFromOptions(files, options) as HandTracker;
-    } catch {
-      tracker = await vision.HandLandmarker.createFromOptions(files, {
-        ...options,
-        baseOptions: { modelAssetPath: handModelUrl, delegate: "CPU" as const },
-      }) as HandTracker;
-    }
-    markGestureTiming("model-load-finish");
-    measureGestureTiming("hand-model-load", "hand-tracking model load start → finish", "model-load-start", "model-load-finish");
-    return tracker;
-  })().catch(error => {
-    handTrackerPromise = null;
+
+    const handleMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+      if (event.data.type === "ready") finish(undefined, event.data.initializationMs);
+      else if (event.data.type === "error" && event.data.stage === "init") finish(new Error(event.data.message || "Hand AI initialization failed"));
+    };
+    const handleError = () => finish(new Error("Hand AI worker failed to load"));
+
+    worker.addEventListener("message", handleMessage);
+    worker.addEventListener("error", handleError);
+    worker.postMessage({ type: "init" });
+  }).catch(error => {
+    gestureEnginePromise = null;
     throw error;
   });
-  return handTrackerPromise;
+
+  return gestureEnginePromise;
 }
 
 const slides: Slide[] = [
@@ -117,8 +122,10 @@ export default function Home() {
   const handSeenRef = useRef(false);
   const cameraAutoStartRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
-  const handTrackerRef = useRef<HandTracker | null>(null);
-  const inferenceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const gestureWorkerRef = useRef<Worker | null>(null);
+  const workerMessageHandlerRef = useRef<((event: MessageEvent<GestureWorkerMessage>) => void) | null>(null);
+  const framePendingRef = useRef(false);
+  const videoFrameCallbackRef = useRef<number | null>(null);
 
   const updatePaused = useCallback((next: boolean) => {
     if (pausedRef.current === next) return;
@@ -192,14 +199,35 @@ export default function Home() {
 
   useEffect(() => () => {
     cancelAnimationFrame(handRaf.current);
-    handTrackerRef.current?.close();
+    const video = videoRef.current as FrameVideo | null;
+    if (video && videoFrameCallbackRef.current !== null) video.cancelVideoFrameCallback?.(videoFrameCallbackRef.current);
+    if (gestureWorkerRef.current && workerMessageHandlerRef.current) gestureWorkerRef.current.removeEventListener("message", workerMessageHandlerRef.current);
     streamRef.current?.getTracks().forEach(track => track.stop());
   }, []);
 
-  const closeGuide = () => {
+  useEffect(() => {
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (connection?.saveData || connection?.effectiveType?.includes("2g")) return;
+
+    const warm = () => {
+      loadGestureEngine()
+        .then(engine => console.log(`[Gesture timing] Hand AI prewarmed in ${engine.initializationMs.toFixed(1)} ms`))
+        .catch(() => undefined);
+    };
+    const frame = requestAnimationFrame(() => warm());
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const closeGuide = useCallback(() => {
     localStorage.setItem("gesture-guide-seen", "true");
     setGuideOpen(false);
-  };
+    updatePaused(false);
+  }, [updatePaused]);
+
+  const closeContact = useCallback(() => {
+    setContactOpen(false);
+    updatePaused(false);
+  }, [updatePaused]);
 
   const navigate = useCallback((dir: number) => {
     updatePaused(true);
@@ -207,21 +235,32 @@ export default function Home() {
     updateGesture(dir > 0 ? "Orbit right" : "Orbit left");
   }, [setOrbitRotation, updateGesture, updatePaused]);
 
+  const closeDetail = useCallback(() => {
+    setOpen(null);
+    updatePaused(false);
+  }, [updatePaused]);
+
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (contactOpen || guideOpen) {
+        if (e.key === "Escape") contactOpen ? closeContact() : closeGuide();
+        return;
+      }
+      const interactive = (e.target as HTMLElement | null)?.closest("button,a,input,textarea,select");
+      if (interactive && (e.key === " " || e.key === "Enter")) return;
       if (e.key === "ArrowRight") navigate(1);
       if (e.key === "ArrowLeft") navigate(-1);
-      if (e.key === " " || e.key === "Enter") { e.preventDefault(); open ? setOpen(null) : setOpen(slides[selected]); }
-      if (e.key === "Escape") setOpen(null);
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); open ? closeDetail() : setOpen(slides[selected]); }
+      if (e.key === "Escape" && open) closeDetail();
     };
     window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key);
-  }, [navigate, open, selected]);
+  }, [closeContact, closeDetail, closeGuide, contactOpen, guideOpen, navigate, open, selected]);
 
   const startCamera = async () => {
     if (camera === "live" || camera === "loading" || camera === "warming") return;
     resetGestureTimings();
     markGestureTiming("activation-click");
-    console.info("[Gesture timing] Camera/gesture test started");
+    console.log("[Gesture timing] Camera/gesture test started");
     setGuideOpen(false);
     localStorage.setItem("gesture-guide-seen", "true");
     setCameraError("");
@@ -231,18 +270,27 @@ export default function Home() {
     try {
       if (!window.isSecureContext) throw new DOMException("Camera requires HTTPS", "SecurityError");
       if (!navigator.mediaDevices?.getUserMedia) throw new DOMException("Camera API unavailable", "NotSupportedError");
+      markGestureTiming("model-load-start");
+      const engineRequest = loadGestureEngine().then(engine => {
+        markGestureTiming("model-load-finish");
+        measureGestureTiming("hand-model-load", "button click → hand AI ready", "model-load-start", "model-load-finish");
+        return engine;
+      });
+      void engineRequest.catch(() => undefined);
       markGestureTiming("get-user-media-called");
       measureGestureTiming("click-to-get-user-media", "button click → getUserMedia call", "activation-click", "get-user-media-called");
-      const streamRequest = navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+      const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
+      const streamRequest = navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: mobile ? 256 : 320, max: 480 },
+          height: { ideal: mobile ? 192 : 240, max: 360 },
+          frameRate: { ideal: mobile ? 18 : 20, max: 24 },
+          facingMode: { ideal: "user" },
+        },
+        audio: false,
+      }).then(stream => {
         markGestureTiming("get-user-media-resolved");
         acquiredStream = stream;
-        const track = stream.getVideoTracks()[0];
-        track?.applyConstraints({
-          width: { ideal: 320 },
-          height: { ideal: 240 },
-          frameRate: { ideal: 24, max: 30 },
-          facingMode: "user",
-        }).catch(() => undefined);
         return stream;
       });
       const stream = await streamRequest;
@@ -256,40 +304,35 @@ export default function Home() {
         markGestureTiming("camera-first-frame");
         measureGestureTiming("camera-resolved-to-visible", "getUserMedia resolved → first visible camera frame", "get-user-media-resolved", "camera-first-frame");
       };
-      const frameVideo = cameraVideo as HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number };
-      if (frameVideo.requestVideoFrameCallback) frameVideo.requestVideoFrameCallback(markVisibleFrame);
+      const previewVideo = cameraVideo as FrameVideo;
+      if (previewVideo.requestVideoFrameCallback) previewVideo.requestVideoFrameCallback(markVisibleFrame);
       else cameraVideo.addEventListener("playing", () => requestAnimationFrame(markVisibleFrame), { once: true });
       cameraVideo.srcObject = stream;
       setCamera("warming");
       updateGesture("CAMERA LIVE · STARTING HAND AI");
-      void cameraVideo.play().catch(() => undefined);
-      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      let tracker: HandTracker;
+      await cameraVideo.play().catch(() => undefined);
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      let engine: GestureEngine;
       try {
-        tracker = await loadHandTracker();
-      } catch {
+        engine = await engineRequest;
+      } catch (error) {
+        console.error("[Gesture timing] Hand AI initialization failed", error);
         setCamera("live");
         setCameraError("CAMERA LIVE · HAND AI COULD NOT LOAD");
         updateGesture("CAMERA LIVE · HAND AI COULD NOT LOAD");
         return;
       }
-      handTrackerRef.current = tracker;
+      const worker = engine.worker;
+      gestureWorkerRef.current = worker;
       setCamera("live"); updateGesture("Show your hand");
       let lastX = 0.5, smoothedX = 0.5, velocityX = 0;
       let lastIndexY = 0.5, indexVelocity = 0, lastTap = 0, tapArmed = false, tapReadyAt = 0;
       let fistFrames = 0, openFrames = 0, lostAt = 0, directionFrames = 0;
       let firstSuccessfulHandDetection = false;
       let directionCandidate: 1 | -1 | null = null;
-      let lastInference = 0;
-      let lastVideoTime = -1;
-      const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
-      const baseInferenceInterval = 1000 / (mobile ? 10 : 15);
+      const baseInferenceInterval = 1000 / (mobile ? 10 : 12);
       let inferenceInterval = baseInferenceInterval;
-      const inferenceCanvas = inferenceCanvasRef.current ?? document.createElement("canvas");
-      inferenceCanvasRef.current = inferenceCanvas;
-      inferenceCanvas.width = mobile ? 208 : 240;
-      inferenceCanvas.height = mobile ? 156 : 180;
-      const inferenceContext = inferenceCanvas.getContext("2d", { alpha: false });
+      let lastInference = 0;
 
       const processHand = (hand: HandPoint[] | null, now: number) => {
         if (hand && hand.length >= 21) {
@@ -360,30 +403,74 @@ export default function Home() {
         }
       };
 
-      const track = (now: number) => {
-        const video = videoRef.current;
-        if (!video || video.readyState < 2 || document.hidden || now - lastInference < inferenceInterval || video.currentTime === lastVideoTime) {
-          handRaf.current = requestAnimationFrame(track);
-          return;
+      if (workerMessageHandlerRef.current) worker.removeEventListener("message", workerMessageHandlerRef.current);
+      const handleWorkerMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+        if (event.data.type === "result") {
+          framePendingRef.current = false;
+          inferenceInterval = Math.max(baseInferenceInterval, Math.min(160, event.data.inferenceMs * 1.8));
+          processHand(event.data.hand, event.data.timestamp);
+        } else if (event.data.type === "error" && event.data.stage === "frame") {
+          framePendingRef.current = false;
+          processHand(null, event.data.timestamp ?? performance.now());
         }
-        lastInference = now;
-        lastVideoTime = video.currentTime;
-        try {
-          if (inferenceContext) inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
-          const started = performance.now();
-          const result = tracker.detectForVideo(inferenceContext ? inferenceCanvas : video, now);
-          const inferenceCost = performance.now() - started;
-          inferenceInterval = Math.max(baseInferenceInterval, Math.min(180, inferenceCost * 2.6));
-          processHand(result.landmarks?.[0] ?? null, now);
-        } catch {
-          processHand(null, now);
-        }
-        handRaf.current = requestAnimationFrame(track);
       };
-      handRaf.current = requestAnimationFrame(track);
+      workerMessageHandlerRef.current = handleWorkerMessage;
+      worker.addEventListener("message", handleWorkerMessage);
+
+      const frameVideo = cameraVideo as FrameVideo;
+      const captureWidth = mobile ? 192 : 224;
+      const captureHeight = mobile ? 144 : 168;
+      const fallbackCanvas = document.createElement("canvas");
+      fallbackCanvas.width = captureWidth;
+      fallbackCanvas.height = captureHeight;
+      const fallbackContext = fallbackCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+      const captureFrame = (now: number) => {
+        if (frameVideo.requestVideoFrameCallback) {
+          videoFrameCallbackRef.current = frameVideo.requestVideoFrameCallback(captureFrame);
+        } else {
+          handRaf.current = requestAnimationFrame(captureFrame);
+        }
+        if (document.hidden || frameVideo.readyState < 2 || framePendingRef.current || now - lastInference < inferenceInterval) return;
+
+        lastInference = now;
+        framePendingRef.current = true;
+        if (typeof createImageBitmap === "function") {
+          createImageBitmap(frameVideo, {
+            resizeWidth: captureWidth,
+            resizeHeight: captureHeight,
+            resizeQuality: "low",
+          }).then(frame => {
+            try {
+              worker.postMessage({ type: "frame", frame, timestamp: now }, [frame]);
+            } catch {
+              frame.close();
+              framePendingRef.current = false;
+            }
+          }).catch(() => {
+            framePendingRef.current = false;
+          });
+        } else if (fallbackContext) {
+          fallbackContext.drawImage(frameVideo, 0, 0, captureWidth, captureHeight);
+          const frame = fallbackContext.getImageData(0, 0, captureWidth, captureHeight);
+          worker.postMessage({ type: "frame", frame, timestamp: now }, [frame.data.buffer]);
+        } else {
+          framePendingRef.current = false;
+        }
+      };
+
+      framePendingRef.current = false;
+      if (frameVideo.requestVideoFrameCallback) videoFrameCallbackRef.current = frameVideo.requestVideoFrameCallback(captureFrame);
+      else handRaf.current = requestAnimationFrame(captureFrame);
     } catch (error) {
+      cancelAnimationFrame(handRaf.current);
+      const video = videoRef.current as FrameVideo | null;
+      if (video && videoFrameCallbackRef.current !== null) video.cancelVideoFrameCallback?.(videoFrameCallbackRef.current);
+      videoFrameCallbackRef.current = null;
+      framePendingRef.current = false;
+      if (gestureWorkerRef.current && workerMessageHandlerRef.current) gestureWorkerRef.current.removeEventListener("message", workerMessageHandlerRef.current);
       (streamRef.current ?? acquiredStream)?.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       setCamera("error");
       const name = error instanceof DOMException ? error.name : "";
       const message = name === "NotAllowedError"
@@ -432,7 +519,7 @@ export default function Home() {
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Vidya Singh home"><span>VS</span><b>VIDYA SINGH</b></a>
       <div className="status"><i className={camera === "live" || camera === "warming" ? "live" : ""}/>{camera === "live" || camera === "warming" ? gesture : "GESTURE PORTFOLIO"}</div>
-      <nav><button onClick={()=>setGuideOpen(true)}>GESTURE GUIDE</button><button onClick={()=>setContactOpen(true)}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
+      <nav><button onClick={()=>{updatePaused(true);setGuideOpen(true);}}>GESTURE GUIDE</button><button onClick={()=>{updatePaused(true);setContactOpen(true);}}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
     </header>
 
     <section className="hero" id="top">
@@ -472,13 +559,13 @@ export default function Home() {
       {camera === "error" && <button className="gesturePrompt hasError" onClick={startCamera}><span className="handGlyph">↻</span><b>CAMERA COULD NOT START</b><small>{cameraError} · Tap to retry</small></button>}
       {camera === "live" && cameraError && <div className="cameraError" role="status">{cameraError}</div>}
       <aside className={`gestureDock ${camera === "live" || camera === "warming" ? "show" : ""}`}>
-        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" muted playsInline autoPlay onClick={()=>{void videoRef.current?.play();}}/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA LIVE · LOADING HAND AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
+        <div className="feedWrap"><video ref={videoRef} className="cameraFeed" width={320} height={240} muted playsInline autoPlay disablePictureInPicture onClick={()=>{void videoRef.current?.play();}}/><span className="scanLine"/><b>{camera === "warming" ? "CAMERA LIVE · LOADING HAND AI" : handSeen ? "HAND LOCKED" : "SEARCHING FOR HAND"}</b></div>
         <div className="gestureReadout"><small>LIVE GESTURE</small><strong>{gesture}</strong><div><span>FIST</span> stop · <span>OPEN</span> start<br/><span>MOVE</span> direction · <span>INDEX TAP</span> open</div></div>
       </aside>
     </section>
 
     {open && <section className="detail" data-scene={open.id} style={{"--accent":open.accent} as React.CSSProperties} aria-modal="true" role="dialog">
-      <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close" onClick={()=>setOpen(null)} aria-label="Close slide">CLOSE <span>×</span></button>
+      <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close" onClick={closeDetail} aria-label="Close slide">CLOSE <span>×</span></button>
       <div className="detailInner">
         <p className="reveal r1"><span>VIDYA SINGH · SELECTED WORKS</span>{open.eyebrow}</p><h2 className="reveal r2">{open.title}</h2>
         <div className="detailGrid reveal r3"><p>{open.description}</p><div className="metric"><b>{open.stat}</b><span>{open.statLabel}</span></div></div>
@@ -487,7 +574,7 @@ export default function Home() {
       </div>
     </section>}
     {contactOpen && <section className="contactPanel" aria-modal="true" role="dialog" aria-label="Contact Vidya Singh">
-      <button className="close" onClick={()=>setContactOpen(false)} aria-label="Close contact panel">CLOSE <span>×</span></button>
+      <button className="close" onClick={closeContact} aria-label="Close contact panel">CLOSE <span>×</span></button>
       <div className="contactInner"><p>LET'S CONNECT</p><h2>Contact<br/><em>Vidya.</em></h2><div className="contactList">
         <div><small>EMAIL</small><strong>singhvidya623@gmail.com</strong></div>
         <div><small>PHONE</small><strong>+91 62904 24147</strong></div>

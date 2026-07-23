@@ -14,6 +14,7 @@ type FrameVideo = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: (now: number) => void) => number;
   cancelVideoFrameCallback?: (handle: number) => void;
 };
+type PortfolioPage = "home" | "contact" | "guide" | `project/${string}`;
 
 const gestureTimingMarks = ["activation-click", "get-user-media-called", "get-user-media-resolved", "camera-first-frame", "model-load-start", "model-load-finish", "first-hand-detected"];
 const gestureTimingMeasures = ["click-to-get-user-media", "camera-resolved-to-visible", "hand-model-load", "click-to-first-hand", "model-ready-to-first-hand"];
@@ -86,6 +87,17 @@ const slides: Slide[] = [
 
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
+function pageFromHash(hash: string): PortfolioPage {
+  const page = decodeURIComponent(hash.replace(/^#\/?/, ""));
+  if (page === "contact" || page === "guide") return page;
+  if (page.startsWith("project/") && slides.some(slide => slide.id === page.slice(8))) return page as PortfolioPage;
+  return "home";
+}
+
+function hashForPage(page: PortfolioPage) {
+  return page === "home" ? "" : `#/${page}`;
+}
+
 function MiniatureScene({ slide, expanded = false }: { slide: Slide; expanded?: boolean }) {
   return <span className={`miniScene${expanded ? " expanded" : ""}`} data-scene={slide.id} aria-hidden="true">
     <span className="sceneBackdrop" />
@@ -104,7 +116,7 @@ export default function Home() {
   const [contactOpen, setContactOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [camera, setCamera] = useState<"idle" | "loading" | "warming" | "live" | "error">("idle");
+  const [camera, setCamera] = useState<"idle" | "loading" | "warming" | "live" | "paused" | "error">("idle");
   const [cameraError, setCameraError] = useState("");
   const [gesture, setGesture] = useState("Move to explore");
   const [handSeen, setHandSeen] = useState(false);
@@ -126,6 +138,7 @@ export default function Home() {
   const workerMessageHandlerRef = useRef<((event: MessageEvent<GestureWorkerMessage>) => void) | null>(null);
   const framePendingRef = useRef(false);
   const videoFrameCallbackRef = useRef<number | null>(null);
+  const cameraSessionRef = useRef(0);
 
   const updatePaused = useCallback((next: boolean) => {
     if (pausedRef.current === next) return;
@@ -177,6 +190,64 @@ export default function Home() {
     paintOrbit(rotation);
   }, [paintOrbit]);
 
+  const syncPageFromLocation = useCallback(() => {
+    const page = pageFromHash(window.location.hash);
+    const projectId = page.startsWith("project/") ? page.slice(8) : "";
+    const projectIndex = projectId ? slides.findIndex(slide => slide.id === projectId) : -1;
+    const project = projectIndex >= 0 ? slides[projectIndex] : null;
+
+    setOpen(project);
+    setContactOpen(page === "contact");
+    setGuideOpen(page === "guide");
+    updatePaused(page !== "home");
+
+    if (project && projectIndex >= 0) setOrbitRotation(-projectIndex * 60);
+    document.title = project
+      ? `${project.title} | Vidya Singh`
+      : page === "contact"
+        ? "Contact | Vidya Singh"
+        : page === "guide"
+          ? "Gesture Guide | Vidya Singh"
+          : "Vidya Singh | AI Engineer";
+    document.body.dataset.portfolioPage = page;
+  }, [setOrbitRotation, updatePaused]);
+
+  const openPage = useCallback((page: PortfolioPage) => {
+    const hash = hashForPage(page);
+    if (pageFromHash(window.location.hash) === page) return;
+    const currentDepth = Number(window.history.state?.portfolioDepth) || 0;
+    const target = `${window.location.pathname}${window.location.search}${hash}`;
+    window.history.pushState({ ...window.history.state, portfolioPage: page, portfolioDepth: currentDepth + 1 }, "", target);
+    syncPageFromLocation();
+  }, [syncPageFromLocation]);
+
+  const goBack = useCallback(() => {
+    const depth = Number(window.history.state?.portfolioDepth) || 0;
+    if (depth > 0) {
+      window.history.back();
+      return;
+    }
+    const target = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState({ ...window.history.state, portfolioPage: "home", portfolioDepth: 0 }, "", target);
+    syncPageFromLocation();
+  }, [syncPageFromLocation]);
+
+  const openSlidePage = useCallback((index: number) => {
+    openPage(`project/${slides[index].id}`);
+  }, [openPage]);
+
+  useEffect(() => {
+    const initialPage = pageFromHash(window.location.hash);
+    window.history.replaceState(
+      { ...window.history.state, portfolioPage: initialPage, portfolioDepth: 0 },
+      "",
+      window.location.href,
+    );
+    syncPageFromLocation();
+    window.addEventListener("popstate", syncPageFromLocation);
+    return () => window.removeEventListener("popstate", syncPageFromLocation);
+  }, [syncPageFromLocation]);
+
   useEffect(() => {
     let last = performance.now();
     const tick = (now: number) => {
@@ -198,6 +269,7 @@ export default function Home() {
   }, [open]);
 
   useEffect(() => () => {
+    cameraSessionRef.current += 1;
     cancelAnimationFrame(handRaf.current);
     const video = videoRef.current as FrameVideo | null;
     if (video && videoFrameCallbackRef.current !== null) video.cancelVideoFrameCallback?.(videoFrameCallbackRef.current);
@@ -220,14 +292,12 @@ export default function Home() {
 
   const closeGuide = useCallback(() => {
     localStorage.setItem("gesture-guide-seen", "true");
-    setGuideOpen(false);
-    updatePaused(false);
-  }, [updatePaused]);
+    goBack();
+  }, [goBack]);
 
   const closeContact = useCallback(() => {
-    setContactOpen(false);
-    updatePaused(false);
-  }, [updatePaused]);
+    goBack();
+  }, [goBack]);
 
   const navigate = useCallback((dir: number) => {
     updatePaused(true);
@@ -236,9 +306,8 @@ export default function Home() {
   }, [setOrbitRotation, updateGesture, updatePaused]);
 
   const closeDetail = useCallback(() => {
-    setOpen(null);
-    updatePaused(false);
-  }, [updatePaused]);
+    goBack();
+  }, [goBack]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -250,14 +319,41 @@ export default function Home() {
       if (interactive && (e.key === " " || e.key === "Enter")) return;
       if (e.key === "ArrowRight") navigate(1);
       if (e.key === "ArrowLeft") navigate(-1);
-      if (e.key === " " || e.key === "Enter") { e.preventDefault(); open ? closeDetail() : setOpen(slides[selected]); }
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); open ? closeDetail() : openSlidePage(selected); }
       if (e.key === "Escape" && open) closeDetail();
     };
     window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key);
-  }, [closeContact, closeDetail, closeGuide, contactOpen, guideOpen, navigate, open, selected]);
+  }, [closeContact, closeDetail, closeGuide, contactOpen, guideOpen, navigate, open, openSlidePage, selected]);
+
+  const stopCamera = useCallback((pauseOrbit = true) => {
+    cameraSessionRef.current += 1;
+    cancelAnimationFrame(handRaf.current);
+    handRaf.current = 0;
+    const video = videoRef.current as FrameVideo | null;
+    if (video && videoFrameCallbackRef.current !== null) video.cancelVideoFrameCallback?.(videoFrameCallbackRef.current);
+    videoFrameCallbackRef.current = null;
+    framePendingRef.current = false;
+    if (gestureWorkerRef.current && workerMessageHandlerRef.current) {
+      gestureWorkerRef.current.removeEventListener("message", workerMessageHandlerRef.current);
+    }
+    gestureWorkerRef.current = null;
+    workerMessageHandlerRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.srcObject = null;
+    }
+    setCamera("paused");
+    setCameraError("");
+    updateHandSeen(false);
+    updateGesture("CAMERA PAUSED · READY TO RESUME");
+    if (pauseOrbit) updatePaused(true);
+  }, [updateGesture, updateHandSeen, updatePaused]);
 
   const startCamera = async () => {
     if (camera === "live" || camera === "loading" || camera === "warming") return;
+    const sessionId = ++cameraSessionRef.current;
     resetGestureTimings();
     markGestureTiming("activation-click");
     console.log("[Gesture timing] Camera/gesture test started");
@@ -294,6 +390,10 @@ export default function Home() {
         return stream;
       });
       const stream = await streamRequest;
+      if (cameraSessionRef.current !== sessionId) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
       streamRef.current = stream;
       if (!videoRef.current) throw new Error("Camera preview unavailable");
       const cameraVideo = videoRef.current;
@@ -312,6 +412,7 @@ export default function Home() {
       updateGesture("CAMERA LIVE · STARTING HAND AI");
       await cameraVideo.play().catch(() => undefined);
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      if (cameraSessionRef.current !== sessionId) return;
       let engine: GestureEngine;
       try {
         engine = await engineRequest;
@@ -322,6 +423,7 @@ export default function Home() {
         updateGesture("CAMERA LIVE · HAND AI COULD NOT LOAD");
         return;
       }
+      if (cameraSessionRef.current !== sessionId) return;
       const worker = engine.worker;
       gestureWorkerRef.current = worker;
       setCamera("live"); updateGesture("Show your hand");
@@ -368,7 +470,7 @@ export default function Home() {
 
           if (tappingDown && now - lastTap > 650) {
             updatePaused(true);
-            setOpen(slides[selectedRef.current]);
+            openSlidePage(selectedRef.current);
             lastTap = now; tapArmed = false; updateGesture("INDEX TAP · OPEN CENTER");
           } else if (fistFrames >= 2) {
             updatePaused(true); tapArmed = false; directionFrames = 0; updateGesture("FIST · ORBIT STOPPED");
@@ -405,6 +507,7 @@ export default function Home() {
 
       if (workerMessageHandlerRef.current) worker.removeEventListener("message", workerMessageHandlerRef.current);
       const handleWorkerMessage = (event: MessageEvent<GestureWorkerMessage>) => {
+        if (cameraSessionRef.current !== sessionId) return;
         if (event.data.type === "result") {
           framePendingRef.current = false;
           inferenceInterval = Math.max(baseInferenceInterval, Math.min(160, event.data.inferenceMs * 1.8));
@@ -425,6 +528,7 @@ export default function Home() {
       fallbackCanvas.height = captureHeight;
       const fallbackContext = fallbackCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
       const captureFrame = (now: number) => {
+        if (cameraSessionRef.current !== sessionId) return;
         if (frameVideo.requestVideoFrameCallback) {
           videoFrameCallbackRef.current = frameVideo.requestVideoFrameCallback(captureFrame);
         } else {
@@ -471,6 +575,7 @@ export default function Home() {
       (streamRef.current ?? acquiredStream)?.getTracks().forEach(track => track.stop());
       streamRef.current = null;
       if (videoRef.current) videoRef.current.srcObject = null;
+      if (cameraSessionRef.current !== sessionId) return;
       setCamera("error");
       const name = error instanceof DOMException ? error.name : "";
       const message = name === "NotAllowedError"
@@ -490,7 +595,7 @@ export default function Home() {
   useEffect(() => {
     if (cameraAutoStartRef.current || new URLSearchParams(window.location.search).get("camera") !== "1") return;
     cameraAutoStartRef.current = true;
-    window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash}`);
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.hash}`);
     const timer = window.setTimeout(() => { startCamera(); }, 300);
     return () => window.clearTimeout(timer);
   }, []);
@@ -499,8 +604,8 @@ export default function Home() {
     const wasSelected = selectedRef.current === index;
     updatePaused(true);
     setOrbitRotation(-index * 60);
-    if (wasSelected) setOpen(slides[index]);
-  }, [setOrbitRotation, updatePaused]);
+    if (wasSelected) openSlidePage(index);
+  }, [openSlidePage, setOrbitRotation, updatePaused]);
 
   const pointerDown = (e: React.PointerEvent) => {
     const card = (e.target as HTMLElement).closest<HTMLElement>("[data-orbit-index]");
@@ -512,6 +617,7 @@ export default function Home() {
   const pointerMove = (e: React.PointerEvent) => { if (!drag.current.active) return; const dx=e.clientX-drag.current.x; drag.current.x=e.clientX; drag.current.moved+=Math.abs(dx); setOrbitRotation(rotRef.current + dx*.16); updateGesture("Drag · orbit"); };
   const pointerUp = () => { if (drag.current.moved < 8 && drag.current.index !== null) activateSlide(drag.current.index); drag.current.active=false; drag.current.index=null; };
   const pointerCancel = () => { drag.current.active = false; drag.current.index = null; };
+  const cameraActive = camera === "live" || camera === "loading" || camera === "warming";
 
   return <main className={`universe${camera === "live" || camera === "warming" ? " cameraActive" : ""}`}>
     <div className="cinemaAtmosphere" aria-hidden="true"><span className="lightSweep sweepOne"/><span className="lightSweep sweepTwo"/><span className="filmGrain"/><span className="vignette"/></div>
@@ -519,7 +625,7 @@ export default function Home() {
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Vidya Singh home"><span>VS</span><b>VIDYA SINGH</b></a>
       <div className="status"><i className={camera === "live" || camera === "warming" ? "live" : ""}/>{camera === "live" || camera === "warming" ? gesture : "GESTURE PORTFOLIO"}</div>
-      <nav><button onClick={()=>{updatePaused(true);setGuideOpen(true);}}>GESTURE GUIDE</button><button onClick={()=>{updatePaused(true);setContactOpen(true);}}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
+      <nav><button onClick={()=>openPage("guide")}>GESTURE GUIDE</button><button onClick={()=>openPage("contact")}>CONTACT</button><a href="https://www.linkedin.com/in/vidya-singh-465350328" target="_blank">LINKEDIN ↗</a></nav>
     </header>
 
     <section className="hero" id="top">
@@ -550,12 +656,13 @@ export default function Home() {
         </div>
       </div>
       <div className="controls">
-        <button onClick={camera === "live" && cameraError ? ()=>window.location.assign("/?camera=1") : startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "OPENING CAMERA…" : camera === "warming" ? "CALIBRATING HAND AI…" : camera === "live" ? cameraError ? "RETRY HAND AI" : "GESTURES LIVE" : camera === "error" ? "RETRY CAMERA" : "ENABLE HAND CONTROL"}</button>
-        <button className="pause" onClick={()=>updatePaused(!pausedRef.current)} aria-label={paused?"Resume orbit":"Pause orbit"}>{paused?"▶":"Ⅱ"}</button>
+        <button onClick={camera === "live" && cameraError ? ()=>window.location.assign("/?camera=1") : cameraActive ? ()=>stopCamera(true) : startCamera} className="gestureBtn"><span>✦</span>{camera === "loading" ? "CANCEL CAMERA" : camera === "warming" ? "PAUSE CAMERA" : camera === "live" ? cameraError ? "RETRY HAND AI" : "PAUSE CAMERA" : camera === "paused" ? "RESUME HAND CONTROL" : camera === "error" ? "RETRY CAMERA" : "ENABLE HAND CONTROL"}</button>
+        <button className={`pause${cameraActive || camera === "paused" ? " cameraToggle" : ""}`} onClick={()=>cameraActive ? stopCamera(true) : camera === "paused" ? void startCamera() : updatePaused(!pausedRef.current)} aria-label={cameraActive ? "Pause and close camera" : camera === "paused" ? "Resume camera and hand control" : paused ? "Resume orbit" : "Pause orbit"} title={cameraActive ? "Pause and close camera" : camera === "paused" ? "Resume camera" : paused ? "Resume orbit" : "Pause orbit"}>{cameraActive?"■":camera === "paused" || paused?"▶":"Ⅱ"}</button>
         <p><b>FIST</b> STOP · <b>OPEN HAND</b> START<br/><b>MOVE LEFT / RIGHT</b> SET DIRECTION · <b>INDEX TAP</b> OPEN</p>
       </div>
       <div className="counter"><b>0{selected+1}</b><span>/ 0{slides.length}</span></div>
       {camera === "idle" && <button className="gesturePrompt" onClick={startCamera}><span className="handGlyph">☝</span><b>CONTROL THIS ORBIT<br/>WITH YOUR HAND</b><small>Activate camera tracking →</small></button>}
+      {camera === "paused" && <button className="gesturePrompt cameraPaused" onClick={startCamera}><span className="handGlyph">▶</span><b>CAMERA PAUSED</b><small>Resume hand control →</small></button>}
       {camera === "error" && <button className="gesturePrompt hasError" onClick={startCamera}><span className="handGlyph">↻</span><b>CAMERA COULD NOT START</b><small>{cameraError} · Tap to retry</small></button>}
       {camera === "live" && cameraError && <div className="cameraError" role="status">{cameraError}</div>}
       <aside className={`gestureDock ${camera === "live" || camera === "warming" ? "show" : ""}`}>
@@ -565,7 +672,7 @@ export default function Home() {
     </section>
 
     {open && <section className="detail" data-scene={open.id} style={{"--accent":open.accent} as React.CSSProperties} aria-modal="true" role="dialog">
-      <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close" onClick={closeDetail} aria-label="Close slide">CLOSE <span>×</span></button>
+      <div className="detailGlow"/><MiniatureScene slide={open} expanded/><span className="detailIndex" aria-hidden="true">{open.eyebrow.split(" / ")[0]}</span><button className="close pageBack" onClick={closeDetail} aria-label="Back to portfolio orbit"><span>←</span> BACK TO ORBIT</button>
       <div className="detailInner">
         <p className="reveal r1"><span>VIDYA SINGH · SELECTED WORKS</span>{open.eyebrow}</p><h2 className="reveal r2">{open.title}</h2>
         <div className="detailGrid reveal r3"><p>{open.description}</p><div className="metric"><b>{open.stat}</b><span>{open.statLabel}</span></div></div>
@@ -574,7 +681,7 @@ export default function Home() {
       </div>
     </section>}
     {contactOpen && <section className="contactPanel" aria-modal="true" role="dialog" aria-label="Contact Vidya Singh">
-      <button className="close" onClick={closeContact} aria-label="Close contact panel">CLOSE <span>×</span></button>
+      <button className="close pageBack" onClick={closeContact} aria-label="Back to portfolio orbit"><span>←</span> BACK TO ORBIT</button>
       <div className="contactInner"><p>LET'S CONNECT</p><h2>Contact<br/><em>Vidya.</em></h2><div className="contactList">
         <div><small>EMAIL</small><strong>singhvidya623@gmail.com</strong></div>
         <div><small>PHONE</small><strong>+91 62904 24147</strong></div>
@@ -582,7 +689,7 @@ export default function Home() {
       </div></div>
     </section>}
     {guideOpen && <section className="guidePanel" aria-modal="true" role="dialog" aria-label="Hand gesture guide">
-      <button className="close" onClick={closeGuide} aria-label="Close gesture guide">GOT IT <span>×</span></button>
+      <button className="close pageBack" onClick={closeGuide} aria-label="Back to portfolio orbit"><span>←</span> BACK TO ORBIT</button>
       <div className="guideInner">
         <p>CAMERA CONTROL · QUICK GUIDE</p><h2>Your hand.<br/><em>The controller.</em></h2>
         <div className="gestureGrid">
@@ -591,7 +698,7 @@ export default function Home() {
           <article><span>↔</span><small>03 · DIRECTION</small><strong>Move left or right</strong><p>Move your visible fingers sideways to set the orbit direction.</p></article>
           <article><span>☝</span><small>04 · OPEN</small><strong>Tap your index</strong><p>Fold the other fingers, then tap your index downward to open the centered slide.</p></article>
         </div>
-        <div className="guideTip"><b>FOR BEST TRACKING</b><span>Face the camera · keep your full hand visible · use even lighting · allow camera permission</span></div>
+        <div className="guideTip"><b>FOR BEST TRACKING</b><span>Face the camera · keep your full hand visible · use even lighting · use PAUSE CAMERA to stop and release the webcam</span></div>
         <button className="guideStart" onClick={closeGuide}>ENTER THE ORBIT →</button>
       </div>
     </section>}

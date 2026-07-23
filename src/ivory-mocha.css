@@ -119,6 +119,9 @@ nav button,nav a{color:#cbbdab!important;font-weight:700!important}nav button:ho
 .detailGrid{border-color:#d6b38242}.detailGrid>p{color:#d6caba}.metric b{color:var(--champagne-bright)}.metric span{color:#9e8e7a}
 .tags span{border-color:#d6b38234;border-radius:0;color:#b9aa96}.detailActions a{color:var(--champagne-bright);border-color:var(--champagne)}
 .close{color:#9d8e7b}.close span{color:var(--champagne-bright)}
+.pageBack{left:4vw;right:auto;display:inline-flex;align-items:center;gap:10px;padding:11px 0;color:var(--crystal-ivory);font-weight:800;border-bottom:1px solid #d6b3825c;transition:color .2s,border-color .2s,transform .2s}
+.pageBack span{margin:0;font:22px/1 var(--display-serif);color:var(--champagne-bright);transition:transform .2s}.pageBack:hover{color:var(--champagne-bright);border-color:var(--champagne);transform:translateX(-3px)}.pageBack:hover span{transform:translateX(-3px)}
+.cameraPaused{border-color:var(--champagne-bright);background:linear-gradient(135deg,#24170cf5,#020202fa)}.cameraToggle{border-color:var(--champagne-bright);box-shadow:0 0 20px #d6b38224,inset 0 1px 0 #ffe8b52b}
 
 .contactPanel,.guidePanel{background:radial-gradient(ellipse at 70% 35%,#b875371d 0%,transparent 35%),linear-gradient(125deg,#000,#080604 55%,#000)}
 .contactInner>p,.guideInner>p{color:var(--champagne)}.contactInner h2,.guideInner h2{color:var(--crystal-ivory)}.contactInner h2 em,.guideInner h2 em{color:var(--champagne-bright)}

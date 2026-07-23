@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const edge = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const port = 9333;
+const port = 19000 + Math.floor(Math.random() * 1000);
 const profile = mkdtempSync(join(tmpdir(), "vidya-portfolio-camera-"));
 const browser = spawn(edge, [
   "--headless=new",
+  "--disable-gpu",
+  "--no-sandbox",
   "--no-first-run",
   "--no-default-browser-check",
   "--use-fake-ui-for-media-stream",
@@ -68,6 +70,10 @@ async function evaluate(expression, attempts = 30) {
 try {
   const target = await getTarget();
   socket = await connect(target.webSocketDebuggerUrl);
+  socket.addEventListener("close", () => {
+    for (const operation of pending.values()) operation.reject(new Error("Browser debugging connection closed"));
+    pending.clear();
+  });
   socket.addEventListener("message", event => {
     const message = JSON.parse(event.data);
     if (message.id && pending.has(message.id)) {
@@ -79,6 +85,8 @@ try {
     }
     if (message.method === "Runtime.consoleAPICalled") {
       consoleMessages.push(message.params.args.map(arg => arg.value ?? arg.description ?? "").join(" "));
+    } else if (message.method === "Runtime.exceptionThrown") {
+      consoleMessages.push(`PAGE ERROR: ${message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text}`);
     }
   });
 
@@ -105,9 +113,11 @@ try {
       const poll = () => {
         const button = document.querySelector(".gestureBtn")?.textContent || "";
         const video = document.querySelector("video");
-        if (button.includes("GESTURES LIVE") || button.includes("RETRY HAND AI") || button.includes("RETRY CAMERA") || performance.now() - started > 70000) {
+        const cameraLive = Boolean(document.querySelector(".gestureDock.show")) && Boolean(video?.srcObject) && (video?.readyState ?? 0) >= 2;
+        if (cameraLive || button.includes("RETRY HAND AI") || button.includes("RETRY CAMERA") || performance.now() - started > 70000) {
           resolve({
             button,
+            cameraLive,
             elapsedMs: performance.now() - started,
             videoReadyState: video?.readyState ?? -1,
             hasStream: Boolean(video?.srcObject),
@@ -144,11 +154,24 @@ try {
 
   const interactions = await evaluate(`(async () => {
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const video = document.querySelector("video");
+    const activeTracks = [...(video?.srcObject?.getTracks?.() || [])];
+    document.querySelector(".pause")?.click();
+    await wait(150);
+    const cameraPaused = !video?.srcObject && activeTracks.length > 0 && activeTracks.every(track => track.readyState === "ended") && document.querySelector(".gestureBtn")?.textContent.includes("RESUME HAND CONTROL");
+    document.querySelector(".gestureBtn")?.click();
+    const restartStarted = performance.now();
+    while ((!video?.srcObject || video.readyState < 2) && performance.now() - restartStarted < 10000) await wait(50);
+    const cameraResumed = Boolean(video?.srcObject) && video.readyState >= 2;
+
     const activeCard = document.querySelector(".orbCard.active");
     activeCard?.click();
     await wait(100);
     const detailOpened = Boolean(document.querySelector(".detail"));
-    document.querySelector(".detail .close")?.click();
+    const projectRouteCreated = location.hash.startsWith("#/project/");
+    history.back();
+    await wait(180);
+    const browserBackClosedDetail = !document.querySelector(".detail") && !location.hash;
     const transformAfterClose = activeCard?.style.transform || "";
     await wait(450);
     const orbitResumed = transformAfterClose !== (activeCard?.style.transform || "");
@@ -158,19 +181,27 @@ try {
     await wait(50);
     const contact = document.querySelector(".contactPanel")?.textContent || "";
     const contactOpened = contact.includes("singhvidya623@gmail.com") && contact.includes("+91 62904 24147");
-    document.querySelector(".contactPanel .close")?.click();
+    const contactRouteCreated = location.hash === "#/contact";
+    const backLabelVisible = document.querySelector(".contactPanel .pageBack")?.textContent.includes("BACK TO ORBIT");
+    document.querySelector(".contactPanel .pageBack")?.click();
+    await wait(180);
 
     navButtons.find(button => button.textContent.includes("GESTURE GUIDE"))?.click();
     await wait(50);
     const guideOpened = Boolean(document.querySelector(".guidePanel"));
+    const guideRouteCreated = location.hash === "#/guide";
     dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await wait(50);
+    await wait(180);
     const guideClosedWithEscape = !document.querySelector(".guidePanel");
-    return { detailOpened, orbitResumed, contactOpened, guideOpened, guideClosedWithEscape };
+    return { cameraPaused, cameraResumed, detailOpened, projectRouteCreated, browserBackClosedDetail, orbitResumed, contactOpened, contactRouteCreated, backLabelVisible, guideOpened, guideRouteCreated, guideClosedWithEscape };
   })()`);
 
   console.log(JSON.stringify({ result, warmResult, frameHealth, interactions, consoleMessages: consoleMessages.filter(message => message.includes("Gesture timing")) }, null, 2));
-  if (!result.hasStream || result.videoReadyState < 2 || !result.button.includes("GESTURES LIVE") || !warmResult.button.includes("GESTURES LIVE") || Object.values(interactions).some(value => !value)) process.exitCode = 1;
+  if (!result.hasStream || result.videoReadyState < 2 || !result.cameraLive || !warmResult.cameraLive || Object.values(interactions).some(value => !value)) process.exitCode = 1;
+} catch (error) {
+  console.error(error);
+  if (consoleMessages.length) console.error(consoleMessages.join("\n"));
+  process.exitCode = 1;
 } finally {
   socket?.close();
   browser.kill();
